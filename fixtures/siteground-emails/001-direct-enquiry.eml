@@ -1,0 +1,32 @@
+Message-ID: <siteground-fixture-001@example.com>
+From: "Emma Brown" <emma.brown@example.com>
+To: info@autodoorsyorkshire.com
+Subject: Garage door repair quote
+Date: Mon, 01 Jun 2026 14:20:00 +0100
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="fixture-boundary"
+
+--fixture-boundary
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+My electric roller garage door is stuck shut and making a grinding noise.
+Can you help with a repair quote?
+
+Phone: 07700 900555
+Postcode: HD3 4AB
+
+Thanks,
+Emma
+
+--fixture-boundary
+Content-Type: text/html; charset=utf-8
+
+<p>Hi,</p>
+<p>My electric roller garage door is stuck shut and making a grinding noise.</p>
+<p>Can you help with a repair quote?</p>
+<p>Phone: 07700 900555<br>Postcode: HD3 4AB</p>
+<p>Thanks,<br>Emma</p>
+
+--fixture-boundary--

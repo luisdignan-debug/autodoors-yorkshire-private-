@@ -1,0 +1,16 @@
+Message-ID: checkatrade-sample-001
+From: leads@notifications.checkatrade.com
+Subject: New Checkatrade customer enquiry - garage door repair
+Date: 2026-06-01T09:15:00+01:00
+
+You have received a new Checkatrade enquiry.
+
+Customer name: Sarah Whitaker
+Customer email: sarah.whitaker@example.com
+Customer phone: 07700 900123
+Postcode: YO30 5AB
+Town: York
+
+Message:
+Hi, my up and over garage door is very stiff and the cable looks loose on one side.
+It is manual and still closes, but I would like it repairing if possible.

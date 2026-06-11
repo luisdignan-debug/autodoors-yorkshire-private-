@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="Autodoors Yorkshire icon">
+  <rect width="192" height="192" rx="38" fill="#0f172a"/>
+  <rect x="36" y="26" width="120" height="13" rx="6" fill="#14b8a6"/>
+  <rect x="42" y="52" width="108" height="70" rx="8" fill="#ffffff"/>
+  <path d="M42 69h108M42 86h108M42 103h108" stroke="#0f172a" stroke-width="5" stroke-linecap="round"/>
+  <text x="96" y="156" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="35" font-weight="900" text-anchor="middle" letter-spacing="1">ADY</text>
+</svg>

@@ -1,0 +1,92 @@
+{
+  "garage_doors": {
+    "label": "Garage doors / shutters",
+    "trade_type": "installation_and_repair",
+    "common_job_types": [
+      "Garage door repair",
+      "Cable or spring repair",
+      "Replacement garage door",
+      "New roller door",
+      "Sectional door",
+      "Up and over door",
+      "Commercial shutter",
+      "Automation upgrade",
+      "Service visit"
+    ],
+    "default_workflow": [
+      "lead",
+      "reply",
+      "quote",
+      "quote_accepted",
+      "deposit",
+      "supplier_order",
+      "supplier_confirmation",
+      "delivery",
+      "installation",
+      "balance_invoice",
+      "review",
+      "closed"
+    ],
+    "default_quote_days": [
+      "Friday"
+    ],
+    "deposit": {
+      "required_by_default": true,
+      "default_type": "fixed_or_percentage",
+      "warning": "Accepted jobs should not wait for supplier ordering without a deposit decision."
+    },
+    "supplier_order_fields": [
+      "supplier_name",
+      "supplier_order_reference",
+      "door_type",
+      "colour_finish",
+      "size_notes",
+      "estimated_delivery_date",
+      "confirmation_email_linked"
+    ],
+    "default_invoice_line_items": [
+      "Supply and fit garage door",
+      "Garage door repair",
+      "Automation upgrade",
+      "Deposit payment request",
+      "Balance payment request"
+    ],
+    "finance_warnings": [
+      "Deposit received but no quote amount recorded",
+      "Supplier order required but not placed",
+      "Supplier confirmation missing",
+      "Delivery overdue",
+      "Installation completed but balance not requested",
+      "Customer balance overdue",
+      "Supplier invoice due"
+    ],
+    "message_templates": {
+      "new_enquiry": "Short professional reply confirming the enquiry and asking for missing details/photos.",
+      "quote_follow_up": "Friendly quote follow-up without pressure.",
+      "deposit_request": "Clear payment request with reference and next step.",
+      "delivery_update": "Plain-English delivery update using supplier wording only.",
+      "balance_request": "Short balance request after completion.",
+      "review_request": "Polite review request after payment."
+    }
+  },
+  "windows_doors": {
+    "label": "Windows and doors",
+    "inherits": "garage_doors",
+    "status": "scaffold"
+  },
+  "kitchens_bathrooms": {
+    "label": "Kitchens / bathrooms",
+    "inherits": "garage_doors",
+    "status": "scaffold"
+  },
+  "roofing_roofline": {
+    "label": "Roofing / roofline",
+    "inherits": "garage_doors",
+    "status": "scaffold"
+  },
+  "general_installation_trade": {
+    "label": "General installation trade",
+    "inherits": "garage_doors",
+    "status": "scaffold"
+  }
+}

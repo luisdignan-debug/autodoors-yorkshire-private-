@@ -1,0 +1,10 @@
+{
+  "lead_id": "checkatrade-webhook-sample-001",
+  "received_at": "2026-06-01T13:30:00.000Z",
+  "customer_name": "Priya Patel",
+  "customer_email": "priya.patel@example.com",
+  "customer_phone": "07700 900444",
+  "postcode": "HD1 2AB",
+  "town": "Huddersfield",
+  "job_description": "Electric roller garage door is making a grinding noise and sometimes will not close. Please advise."
+}

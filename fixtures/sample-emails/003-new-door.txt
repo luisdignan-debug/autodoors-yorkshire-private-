@@ -1,0 +1,16 @@
+Message-ID: checkatrade-sample-003
+From: noreply@checkatrade.com
+Subject: Checkatrade enquiry - new garage door quote
+Date: 2026-06-01T11:45:00+01:00
+
+New customer lead from Checkatrade.
+
+Customer name: Aisha Khan
+Customer email: aisha.khan@example.com
+Customer phone: 07888 111222
+Postcode: HG2 0AA
+Town: Harrogate
+
+Message:
+We are looking to replace an old wooden garage door with a new sectional door.
+Please can you arrange a quote? Fridays usually work for us.

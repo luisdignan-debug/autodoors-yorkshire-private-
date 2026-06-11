@@ -1,0 +1,16 @@
+Message-ID: checkatrade-sample-002
+From: enquiries@checkatrade.com
+Subject: Urgent Checkatrade lead - garage door stuck open
+Date: 2026-06-01T10:05:00+01:00
+
+Checkatrade customer enquiry.
+
+Customer name: Mr James Collins
+Customer email: james.collins@example.com
+Customer phone: 07911 222333
+Postcode: LS17 8HH
+Town: Leeds
+
+Message:
+Our electric roller garage door is stuck open and the garage is insecure.
+Can someone call me as soon as possible?

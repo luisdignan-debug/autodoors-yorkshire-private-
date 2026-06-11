@@ -1,0 +1,34 @@
+{
+  "cable_repair": {
+    "subject": "Garage door cable repair enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry.\n\nFor a cable/spring repair, please send:\n\n* photos from inside and outside;\n* close-ups of the cable/drum area on both sides;\n* whether the door is manual or electric;\n* whether the door is fully closed and secure;\n* your postcode;\n* whether you would like a repair visit/quote.\n\nWe usually arrange quotes on {{quote_day}}s, but if the door is insecure or stuck open, please let us know as urgent.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "standard_repair": {
+    "subject": "Garage door enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry.\n\nWe should be able to advise on this. To help us assess it properly, please send:\n\n{{missing_items}}\n\nWe usually arrange quotes on {{quote_day}}s, but if the door is insecure or urgent, please let us know.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "emergency_repair": {
+    "subject": "Garage door enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry.\n\nIf the garage door is insecure, stuck open, or you cannot close it, please reply to confirm it is urgent and include a contact number if you have not already sent one.\n\nTo help us assess it quickly, please send:\n\n{{missing_items}}\n\nWe usually arrange quotes on {{quote_day}}s, but urgent security issues will be reviewed separately.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "new_installation": {
+    "subject": "Garage door quote enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry about a garage door.\n\nWe can advise on options once we have a little more detail. Please send:\n\n{{missing_items}}\n\nWe usually arrange quotes on {{quote_day}}s and will come back to you after reviewing the details.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "service": {
+    "subject": "Garage door service enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry.\n\nWe can look at servicing or maintenance. Please send:\n\n{{missing_items}}\n\nWe usually arrange quotes on {{quote_day}}s, unless there is an urgent security issue.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "out_of_area": {
+    "subject": "Garage door enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry.\n\nI am sorry, but it looks like this may be outside our usual service area. If the postcode is different from the one supplied, please let us know and we can double-check.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "missing_information": {
+    "subject": "Garage door enquiry",
+    "body": "{{greeting}}\n\nThanks for your enquiry.\n\nTo help us assess it properly, please send:\n\n{{missing_items}}\n\nWe usually arrange quotes on {{quote_day}}s, but if the door is insecure or urgent, please let us know.\n\nKind regards,\n\n{{business_name}}"
+  },
+  "follow_up": {
+    "subject": "Garage door enquiry follow-up",
+    "body": "{{greeting}}\n\nJust following up on your garage door enquiry.\n\nIf you would still like us to advise, please send any missing photos, video, postcode, and whether the door is manual or electric.\n\nKind regards,\n\n{{business_name}}"
+  }
+}
