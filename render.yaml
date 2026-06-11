@@ -1,3 +1,9 @@
+databases:
+  - name: autodoors-yorkshire-db
+    plan: free
+    databaseName: autodoors_yorkshire
+    user: autodoors
+
 services:
   - type: web
     name: autodoors-yorkshire
