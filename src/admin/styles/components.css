@@ -809,7 +809,7 @@
   font-size: 15px;
   font-family: var(--ay-font-sans);
   color: var(--ay-text-primary);
-  background: var(--ay-surface-card);
+  background: var(--ay-surface-muted);
   border: 1px solid var(--ay-border-strong);
   border-radius: var(--ay-radius-md);
   transition: border-color var(--ay-transition-fast), box-shadow var(--ay-transition-fast);
@@ -824,11 +824,12 @@
 .ay-select:focus,
 .ay-textarea:focus {
   border-color: var(--ay-border-focus);
-  box-shadow: 0 0 0 3px rgba(26,25,24,0.08);
+  box-shadow: 0 0 0 3px var(--ay-brand-soft);
+  outline: none;
 }
 
 .ay-input::placeholder,
-.ay-textarea::placeholder { color: var(--ay-text-muted-on-surface); }
+.ay-textarea::placeholder { color: var(--ay-text-secondary); }
 
 .ay-form-error {
   font-size: 13px;
