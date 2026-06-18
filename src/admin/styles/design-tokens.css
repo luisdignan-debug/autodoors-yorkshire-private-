@@ -29,6 +29,7 @@
   --ay-text-primary:     #1A2230;   /* ink navy */
   --ay-text-secondary:   #5A6472;
   --ay-text-tertiary:    #97A0AD;
+  --ay-text-muted-on-surface: #5A6472;
   --ay-text-inverse:     #FFFFFF;
   --ay-text-link:        #1B6FB8;
 
@@ -119,6 +120,23 @@
 
   /* ── Bottom nav height (for page padding on mobile) ── */
   --ay-bottom-nav-height: 64px;
+
+  /* Legacy bridge tokens */
+  --bg:             var(--ay-surface-page);
+  --surface:        var(--ay-surface-card);
+  --surface-soft:   var(--ay-surface-subtle);
+  --text:           var(--ay-text-primary);
+  --muted:          var(--ay-text-secondary);
+  --border:         var(--ay-border);
+  --primary:        var(--ay-brand);
+  --primary-strong: var(--ay-brand-active);
+  --accent:         var(--ay-brand);
+  --success:        var(--ay-green-dot);
+  --warning:        var(--ay-amber-dot);
+  --danger:         var(--ay-red-dot);
+  --neutral:        var(--ay-gray-dot);
+  --radius:         var(--ay-radius-md);
+  --shadow:         var(--ay-shadow-md);
 }
 
 /* Dark mode overrides */
@@ -144,6 +162,7 @@
     --ay-text-primary:    #EBEEF2;
     --ay-text-secondary:  #9AA3AF;
     --ay-text-tertiary:   #69727E;
+    --ay-text-muted-on-surface: var(--ay-text-secondary);
     --ay-text-inverse:    #0B1B2B;
     --ay-text-link:       #8EC0EA;
 

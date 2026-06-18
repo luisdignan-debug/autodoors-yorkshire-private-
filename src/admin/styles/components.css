@@ -75,7 +75,7 @@
   font-weight: 600;
   letter-spacing: 0.7px;
   text-transform: uppercase;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin: 0 0 var(--ay-space-3) 0;
 }
 
@@ -108,7 +108,7 @@
 .ay-sidebar__logo-sub {
   font-size: 11px;
   font-weight: 400;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   display: block;
   margin-top: 1px;
 }
@@ -122,7 +122,7 @@
   font-weight: 700;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   padding: 0 var(--ay-space-3);
   margin: 0 0 var(--ay-space-1) 0;
 }
@@ -218,7 +218,7 @@
   justify-content: center;
   gap: 3px;
   text-decoration: none;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   font-size: 10px;
   font-weight: 500;
   padding: var(--ay-space-2) var(--ay-space-1);
@@ -496,7 +496,7 @@
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin: 0 0 var(--ay-space-2) 0;
 }
 
@@ -516,7 +516,7 @@
 
 .ay-summary-card__sub {
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin: 0;
 }
 
@@ -625,7 +625,7 @@
 
 .ay-system-card__last-checked {
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
 }
 
 /* ─── FILTER TABS ─── */
@@ -726,7 +726,7 @@
 }
 
 .ay-input::placeholder,
-.ay-textarea::placeholder { color: var(--ay-text-tertiary); }
+.ay-textarea::placeholder { color: var(--ay-text-muted-on-surface); }
 
 .ay-form-error {
   font-size: 13px;
@@ -736,7 +736,7 @@
 
 .ay-form-hint {
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin-top: 5px;
 }
 
@@ -782,7 +782,7 @@
 
 .ay-timeline-item__date {
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin: 0 0 3px 0;
 }
 
@@ -815,7 +815,7 @@
   font-weight: 700;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin: 0 0 var(--ay-space-2) 0;
 }
 
@@ -866,7 +866,7 @@
   font-weight: 700;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin: 0 0 var(--ay-space-3) 0;
 }
 
@@ -890,7 +890,7 @@
 }
 
 .ay-detail-card__row-value--missing {
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   font-weight: 400;
 }
 
@@ -910,7 +910,7 @@
   border: none;
   cursor: pointer;
   font-size: 13px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   padding: 0;
   font-family: var(--ay-font-sans);
   transition: color var(--ay-transition-fast);
@@ -977,7 +977,7 @@
 .ay-empty__icon {
   width: 48px;
   height: 48px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   margin-bottom: var(--ay-space-4);
   opacity: 0.5;
 }
@@ -1176,7 +1176,7 @@
 
 .ay-inbox-card__date {
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -1232,7 +1232,7 @@
   border: none;
   cursor: pointer;
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
   padding: 0;
   margin-left: auto;
   font-family: var(--ay-font-sans);
@@ -1312,7 +1312,7 @@
   margin-top: auto;
   padding: var(--ay-space-3);
   font-size: 12px;
-  color: var(--ay-text-tertiary);
+  color: var(--ay-text-muted-on-surface);
 }
 
 .ay-sidebar__foot strong {
