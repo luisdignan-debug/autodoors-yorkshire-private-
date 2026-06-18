@@ -2267,13 +2267,13 @@ function jobsPage(leads, params, state = {}) {
       ${aySummaryCard({ label: "Money to collect", value: formatMoney(finance.customerOutstanding), href: "/money" })}
       ${aySummaryCard({ label: "Payment due", value: String(paymentDue.length), href: "/jobs?quick=payments" })}
     </div></section>
-    <form method="get" class="filters filter-panel" style="background:var(--ay-green-bg);border-color:var(--ay-green-border)">
+    <form method="get" class="filters filter-panel">
       <input name="search" placeholder="Search customer, postcode, phone, supplier ref" value="${escapeAttr(params.get("search") || "")}">
       <button>Search jobs</button>
       <a class="button secondary" href="/jobs">Clear</a>
     </form>
     ${ayFilterTabs(quickFilters.map(([label, value]) => ({ label, href: `/jobs${value ? `?quick=${value}` : ""}`, active: (params.get("quick") || "") === value })), "Job filters")}
-    <section class="panel" style="background:var(--ay-green-bg);border-color:var(--ay-green-border)"><div class="panel-heading"><h2>Jobs queue</h2><a class="button secondary compact-button" href="/leads">Lead inbox</a></div>${leadScanCards(activeJobs, state)}</section>
+    <section class="panel"><div class="panel-heading"><h2>Jobs queue</h2><a class="button secondary compact-button" href="/leads">Lead inbox</a></div>${leadScanCards(activeJobs, state)}</section>
     <details class="drawer"><summary>Advanced table and bulk controls</summary><div class="drawer-body"><form method="post" action="/leads/bulk">${bulkToolbar()}${leadTable(activeJobs, { selectable: true, state })}</form></div></details>`
   );
 }
