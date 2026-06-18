@@ -316,6 +316,108 @@
 
 /* ─── BUTTONS ─── */
 
+/* TABLES */
+
+.ay-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--ay-surface-card);
+  border: 1px solid var(--ay-border);
+  border-radius: var(--ay-radius-lg);
+  overflow: hidden;
+}
+
+.ay-table th,
+.ay-table td {
+  padding: var(--ay-space-3);
+  text-align: left;
+  vertical-align: top;
+  font-size: 14px;
+  border-bottom: 1px solid var(--ay-border-subtle);
+}
+
+.ay-table th {
+  background: var(--ay-surface-subtle);
+  color: var(--ay-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.ay-table tbody tr:hover {
+  background: var(--ay-surface-subtle);
+}
+
+.ay-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ay-table a {
+  color: var(--ay-text-link);
+}
+
+@media (max-width: 768px) {
+  .ay-table {
+    display: block;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .ay-table thead {
+    display: none;
+  }
+
+  .ay-table tbody {
+    display: block;
+  }
+
+  .ay-table tr {
+    display: block;
+    background: var(--ay-surface-card);
+    border: 1px solid var(--ay-border);
+    border-radius: var(--ay-radius-lg);
+    margin: 0 0 var(--ay-space-3) 0;
+    padding: var(--ay-space-3);
+  }
+
+  .ay-table td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ay-space-3);
+    padding: var(--ay-space-2) 0;
+    border-bottom: 1px solid var(--ay-border-subtle);
+  }
+
+  .ay-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .ay-table td::before {
+    content: attr(data-label);
+    flex: 0 0 38%;
+    max-width: 12rem;
+    color: var(--ay-text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .ay-table td.select-col {
+    justify-content: flex-start;
+  }
+
+  .ay-table td.select-col::before {
+    flex: 0 0 auto;
+    min-width: 52px;
+  }
+}
+
 .ay-btn {
   display: inline-flex;
   align-items: center;

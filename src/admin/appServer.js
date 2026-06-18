@@ -2082,16 +2082,16 @@ function invoiceEditForm(invoice, settings = {}) {
 function invoiceTable(invoices, leads) {
   if (!invoices.length) return `<p class="muted">No customer invoices yet.</p>`;
   const leadNames = new Map((leads || []).map((lead) => [lead.id, lead.customerName || lead.customerPostcode || lead.id]));
-  return `<table><thead><tr><th>Invoice</th><th>Customer</th><th>Job</th><th>Dates</th><th>Total</th><th>Paid</th><th>Outstanding</th><th>Status</th><th>Actions</th></tr></thead><tbody>${invoices.map((invoice) => `<tr>
-    <td><a href="/invoices/${encodeURIComponent(invoice.invoice_id)}">${escapeHtml(invoice.invoice_number || "Draft")}</a><br><span class="muted">${escapeHtml(statusLabel(invoice.invoice_type))}</span></td>
-    <td>${escapeHtml(invoice.customer_name || "")}<br><span class="muted">${escapeHtml(invoice.customer_postcode || "")}</span></td>
-    <td>${invoice.lead_id ? `<a href="/leads/${encodeURIComponent(invoice.lead_id)}">${escapeHtml(leadNames.get(invoice.lead_id) || invoice.lead_id)}</a>` : ""}</td>
-    <td><span class="muted">Invoice</span><br>${escapeHtml(invoice.invoice_date || "")}<br><span class="muted">Due</span><br>${escapeHtml(invoice.due_date || "")}</td>
-    <td>${escapeHtml(formatMoney(invoice.total_gross))}</td>
-    <td>${escapeHtml(formatMoney(invoice.amount_paid))}</td>
-    <td>${escapeHtml(formatMoney(invoice.amount_outstanding))}</td>
-    <td>${badge(invoice.status)}</td>
-    <td><a class="button compact-button" href="/invoices/${encodeURIComponent(invoice.invoice_id)}">Open</a> <a class="button secondary compact-button" href="/invoices/${encodeURIComponent(invoice.invoice_id)}/pdf">PDF</a></td>
+  return `<table class="ay-table"><thead><tr><th>Invoice</th><th>Customer</th><th>Job</th><th>Dates</th><th>Total</th><th>Paid</th><th>Outstanding</th><th>Status</th><th>Actions</th></tr></thead><tbody>${invoices.map((invoice) => `<tr>
+    <td data-label="Invoice"><a href="/invoices/${encodeURIComponent(invoice.invoice_id)}">${escapeHtml(invoice.invoice_number || "Draft")}</a><br><span class="muted">${escapeHtml(statusLabel(invoice.invoice_type))}</span></td>
+    <td data-label="Customer">${escapeHtml(invoice.customer_name || "")}<br><span class="muted">${escapeHtml(invoice.customer_postcode || "")}</span></td>
+    <td data-label="Job">${invoice.lead_id ? `<a href="/leads/${encodeURIComponent(invoice.lead_id)}">${escapeHtml(leadNames.get(invoice.lead_id) || invoice.lead_id)}</a>` : ""}</td>
+    <td data-label="Dates"><span class="muted">Invoice</span><br>${escapeHtml(invoice.invoice_date || "")}<br><span class="muted">Due</span><br>${escapeHtml(invoice.due_date || "")}</td>
+    <td data-label="Total">${escapeHtml(formatMoney(invoice.total_gross))}</td>
+    <td data-label="Paid">${escapeHtml(formatMoney(invoice.amount_paid))}</td>
+    <td data-label="Outstanding">${escapeHtml(formatMoney(invoice.amount_outstanding))}</td>
+    <td data-label="Status">${badge(invoice.status)}</td>
+    <td data-label="Actions"><a class="button compact-button" href="/invoices/${encodeURIComponent(invoice.invoice_id)}">Open</a> <a class="button secondary compact-button" href="/invoices/${encodeURIComponent(invoice.invoice_id)}/pdf">PDF</a></td>
   </tr>`).join("")}</tbody></table>`;
 }
 
@@ -2175,8 +2175,8 @@ function workOrderDetailPage(order, config, store) {
 }
 
 function logTable(logs) {
-  return `<table><thead><tr><th>Time</th><th>Level</th><th>Message</th><th>Details</th></tr></thead><tbody>${logs
-    .map((log) => `<tr><td>${escapeHtml(shortDate(log.timestamp))}</td><td>${badge(log.level)}</td><td>${escapeHtml(log.message)}</td><td class="job-short">${escapeHtml(JSON.stringify(log.details || {}))}</td></tr>`)
+  return `<table class="ay-table"><thead><tr><th>Time</th><th>Level</th><th>Message</th><th>Details</th></tr></thead><tbody>${logs
+    .map((log) => `<tr><td data-label="Time">${escapeHtml(shortDate(log.timestamp))}</td><td data-label="Level">${badge(log.level)}</td><td data-label="Message">${escapeHtml(log.message)}</td><td class="job-short" data-label="Details">${escapeHtml(JSON.stringify(log.details || {}))}</td></tr>`)
     .join("")}</tbody></table>`;
 }
 
@@ -2962,12 +2962,12 @@ function leadTable(leads, options = {}) {
   if (!leads.length) return "<p>No leads yet.</p>";
   const selectable = Boolean(options.selectable);
   const state = ensureFinanceState(options.state || {});
-  return `<table><thead><tr>${selectable ? `<th class="select-col"><input id="select-all-leads" type="checkbox" aria-label="Select all leads"></th>` : ""}<th>Received</th><th>Customer</th><th>Stage</th><th>RAG</th><th>Next action</th><th>Money / supplier</th><th>Job</th></tr></thead><tbody>${leads
+  return `<table class="ay-table"><thead><tr>${selectable ? `<th class="select-col"><input id="select-all-leads" type="checkbox" aria-label="Select all leads"></th>` : ""}<th>Received</th><th>Customer</th><th>Stage</th><th>RAG</th><th>Next action</th><th>Money / supplier</th><th>Job</th></tr></thead><tbody>${leads
     .map(
       (lead) => {
         ensureJobFields(lead);
         const finance = jobFinancials(lead, state);
-        return `<tr>${selectable ? `<td class="select-col"><input class="lead-select" name="leadId" type="checkbox" value="${escapeAttr(lead.id)}" aria-label="Select ${escapeAttr(lead.customerName || lead.id)}"></td>` : ""}<td>${escapeHtml(shortDate(lead.receivedAt))}</td><td><a href="/leads/${encodeURIComponent(lead.id)}">${escapeHtml(lead.customerName || "Unknown")}</a><br><span class="customer-line">${escapeHtml(lead.customerPhone || lead.customerEmail || "")}</span><br>${escapeHtml(lead.customerPostcode || "")}</td><td>${workflowBadge(lead.workflow_type)}<br>${escapeHtml(stageLabel(lead))}</td><td>${ragBadge(lead.operational_risk_level)}<br>${badge(lead.priorityLabel)}</td><td>${escapeHtml(lead.next_best_action || lead.nextAction || "")}</td><td>${finance.customerOutstanding ? `${escapeHtml(formatMoney(finance.customerOutstanding))} due<br>` : ""}${escapeHtml(statusLabel(lead.supplier_order_status || ""))}<br>${escapeHtml(statusLabel(lead.supplier_invoice_status || ""))}</td><td class="job-short">${escapeHtml(String(lead.jobDescription || "").slice(0, 150))}</td></tr>`;
+        return `<tr>${selectable ? `<td class="select-col" data-label="Select"><input class="lead-select" name="leadId" type="checkbox" value="${escapeAttr(lead.id)}" aria-label="Select ${escapeAttr(lead.customerName || lead.id)}"></td>` : ""}<td data-label="Received">${escapeHtml(shortDate(lead.receivedAt))}</td><td data-label="Customer"><a href="/leads/${encodeURIComponent(lead.id)}">${escapeHtml(lead.customerName || "Unknown")}</a><br><span class="customer-line">${escapeHtml(lead.customerPhone || lead.customerEmail || "")}</span><br>${escapeHtml(lead.customerPostcode || "")}</td><td data-label="Stage">${workflowBadge(lead.workflow_type)}<br>${escapeHtml(stageLabel(lead))}</td><td data-label="RAG">${ragBadge(lead.operational_risk_level)}<br>${badge(lead.priorityLabel)}</td><td data-label="Next action">${escapeHtml(lead.next_best_action || lead.nextAction || "")}</td><td data-label="Money / supplier">${finance.customerOutstanding ? `${escapeHtml(formatMoney(finance.customerOutstanding))} due<br>` : ""}${escapeHtml(statusLabel(lead.supplier_order_status || ""))}<br>${escapeHtml(statusLabel(lead.supplier_invoice_status || ""))}</td><td class="job-short" data-label="Job">${escapeHtml(String(lead.jobDescription || "").slice(0, 150))}</td></tr>`;
       }
     )
     .join("")}</tbody></table>`;
@@ -3258,8 +3258,8 @@ function supplierEmailCards(emails, leads) {
 function supplierEmailTable(emails, leads) {
   if (!emails.length) return "<p>No supplier email records yet.</p>";
   const leadNames = new Map(leads.map((lead) => [lead.id, lead.customerName || lead.customerPostcode || lead.id]));
-  return `<table><thead><tr><th>Received</th><th>Supplier</th><th>Subject</th><th>Order/ref</th><th>Match</th><th>Status</th><th>Action</th></tr></thead><tbody>${emails
-    .map((email) => `<tr><td>${escapeHtml(shortDate(email.receivedAt))}</td><td>${escapeHtml(email.supplierName || email.supplierEmail || "Unknown")}</td><td>${escapeHtml(email.subject || "")}<br><span class="muted">${escapeHtml(String(email.rawSummary || "").slice(0, 140))}</span></td><td>${escapeHtml(email.extractedOrderReference || email.invoiceReference || "")}</td><td>${email.matchedLeadId ? `<a href="/leads/${encodeURIComponent(email.matchedLeadId)}">${escapeHtml(leadNames.get(email.matchedLeadId) || email.matchedLeadId)}</a>` : "Unlinked"}<br>${escapeHtml(String(email.matchConfidence || 0))}% ${escapeHtml(email.matchReason || "")}</td><td>${badge(email.reviewStatus || "Needs review")}</td><td><a class="button compact-button" href="/supplier-emails/${encodeURIComponent(email.id)}">Open</a></td></tr>`)
+  return `<table class="ay-table"><thead><tr><th>Received</th><th>Supplier</th><th>Subject</th><th>Order/ref</th><th>Match</th><th>Status</th><th>Action</th></tr></thead><tbody>${emails
+    .map((email) => `<tr><td data-label="Received">${escapeHtml(shortDate(email.receivedAt))}</td><td data-label="Supplier">${escapeHtml(email.supplierName || email.supplierEmail || "Unknown")}</td><td data-label="Subject">${escapeHtml(email.subject || "")}<br><span class="muted">${escapeHtml(String(email.rawSummary || "").slice(0, 140))}</span></td><td data-label="Order/ref">${escapeHtml(email.extractedOrderReference || email.invoiceReference || "")}</td><td data-label="Match">${email.matchedLeadId ? `<a href="/leads/${encodeURIComponent(email.matchedLeadId)}">${escapeHtml(leadNames.get(email.matchedLeadId) || email.matchedLeadId)}</a>` : "Unlinked"}<br>${escapeHtml(String(email.matchConfidence || 0))}% ${escapeHtml(email.matchReason || "")}</td><td data-label="Status">${badge(email.reviewStatus || "Needs review")}</td><td data-label="Action"><a class="button compact-button" href="/supplier-emails/${encodeURIComponent(email.id)}">Open</a></td></tr>`)
     .join("")}</tbody></table>`;
 }
 
