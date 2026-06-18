@@ -35,7 +35,8 @@
 
 @media (max-width: 768px) {
   .ay-page-header {
-    padding: var(--ay-space-5) var(--ay-space-4) var(--ay-space-4);
+    /* Clear the iOS status bar (time/signal/wifi/battery) on notched devices. */
+    padding: calc(var(--ay-space-5) + env(safe-area-inset-top)) var(--ay-space-4) var(--ay-space-4);
   }
 }
 
@@ -194,7 +195,9 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: var(--ay-bottom-nav-height);
+  /* Full 64px row for the icons PLUS the iOS home-indicator safe area below,
+     so the icons stay vertically centred instead of being squeezed up. */
+  height: calc(var(--ay-bottom-nav-height) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--ay-surface-card);
   border-top: 1px solid var(--ay-border);
@@ -1343,21 +1346,24 @@
   .ay-page-header__search { flex: 1 1 100%; }
 }
 
-/* ─── MOBILE "MORE" SHEET (no-JS :target) ─── */
+/* ─── MOBILE "MORE" SHEET (no-JS checkbox toggle) ─── */
 
-.ay-more-sheet { display: none; }
+#ay-more-toggle { position: absolute; opacity: 0; pointer-events: none; }
 
-.ay-more-sheet:target {
-  display: block;
+.ay-more-sheet {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 200;
 }
 
+#ay-more-toggle:checked ~ .ay-more-sheet { display: block; }
+
 .ay-more-sheet__backdrop {
   position: absolute;
   inset: 0;
   background: var(--ay-surface-overlay);
+  cursor: pointer;
 }
 
 .ay-more-sheet__panel {
@@ -1375,7 +1381,7 @@
 }
 
 @media (min-width: 769px) {
-  .ay-more-sheet:target { display: none; }
+  #ay-more-toggle:checked ~ .ay-more-sheet { display: none; }
 }
 
 /* ─── REDUCED MOTION (plan 16.9) ─── */

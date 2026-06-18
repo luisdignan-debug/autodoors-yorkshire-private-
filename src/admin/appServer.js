@@ -2267,13 +2267,13 @@ function jobsPage(leads, params, state = {}) {
       ${aySummaryCard({ label: "Money to collect", value: formatMoney(finance.customerOutstanding), href: "/money" })}
       ${aySummaryCard({ label: "Payment due", value: String(paymentDue.length), href: "/jobs?quick=payments" })}
     </div></section>
-    <form method="get" class="filters filter-panel">
+    <form method="get" class="filters filter-panel" style="background:var(--ay-green-bg);border-color:var(--ay-green-border)">
       <input name="search" placeholder="Search customer, postcode, phone, supplier ref" value="${escapeAttr(params.get("search") || "")}">
       <button>Search jobs</button>
       <a class="button secondary" href="/jobs">Clear</a>
     </form>
     ${ayFilterTabs(quickFilters.map(([label, value]) => ({ label, href: `/jobs${value ? `?quick=${value}` : ""}`, active: (params.get("quick") || "") === value })), "Job filters")}
-    <section class="panel"><div class="panel-heading"><h2>Jobs queue</h2><a class="button secondary compact-button" href="/leads">Lead inbox</a></div>${leadScanCards(activeJobs, state)}</section>
+    <section class="panel" style="background:var(--ay-green-bg);border-color:var(--ay-green-border)"><div class="panel-heading"><h2>Jobs queue</h2><a class="button secondary compact-button" href="/leads">Lead inbox</a></div>${leadScanCards(activeJobs, state)}</section>
     <details class="drawer"><summary>Advanced table and bulk controls</summary><div class="drawer-body"><form method="post" action="/leads/bulk">${bulkToolbar()}${leadTable(activeJobs, { selectable: true, state })}</form></div></details>`
   );
 }
@@ -2679,6 +2679,7 @@ function pageShell(title, body, status = 200) {
     + `</div></header>`;
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#15426B"><title>${escapeHtml(title)}</title><style>${appStyles()}</style></head><body>`
+    + `<input type="checkbox" id="ay-more-toggle" class="ay-sr-only" aria-hidden="true" tabindex="-1">`
     + `<a class="ay-sr-only" href="#main-content">Skip to main content</a>`
     + `<div class="ay-shell">`
     + `<aside class="ay-sidebar">`
@@ -2688,8 +2689,8 @@ function pageShell(title, body, status = 200) {
     + `</aside>`
     + `<div class="ay-main-content">${header}<main id="main-content">${body}</main></div>`
     + `</div>`
-    + `<nav class="ay-bottom-nav" aria-label="Primary mobile"><div class="ay-bottom-nav__items">${bottomNav.map(bottomItem).join("")}<a class="ay-bottom-nav__item" href="#ay-more"><span class="ay-bottom-nav__item__icon">${ayIcon("more", 24)}</span><span>More</span></a></div></nav>`
-    + `<div id="ay-more" class="ay-more-sheet"><a class="ay-more-sheet__backdrop" href="#" aria-label="Close menu"></a><div class="ay-more-sheet__panel"><div class="ay-sheet__handle"></div><p class="ay-section-label" style="padding:0 var(--ay-space-3)">Menu</p><nav aria-label="All sections">${moreSheetLinks}</nav><div style="padding:var(--ay-space-3)">${signOut}</div></div></div>`
+    + `<nav class="ay-bottom-nav" aria-label="Primary mobile"><div class="ay-bottom-nav__items">${bottomNav.map(bottomItem).join("")}<label class="ay-bottom-nav__item" for="ay-more-toggle" role="button" tabindex="0" aria-controls="ay-more-toggle"><span class="ay-bottom-nav__item__icon">${ayIcon("more", 24)}</span><span>More</span></label></div></nav>`
+    + `<div class="ay-more-sheet"><label class="ay-more-sheet__backdrop" for="ay-more-toggle" aria-label="Close menu"></label><div class="ay-more-sheet__panel"><div class="ay-sheet__handle"></div><div class="ay-sheet__header"><p class="ay-sheet__title">Menu</p><label class="ay-sheet__close" for="ay-more-toggle" role="button" tabindex="0" aria-label="Close menu">✕</label></div><nav aria-label="All sections" style="padding:var(--ay-space-2)">${moreSheetLinks}</nav><div style="padding:var(--ay-space-3)">${signOut}</div></div></div>`
     + `<div class="ay-toast-region" aria-live="polite" aria-atomic="false"></div>`
     + `<script>${appScript()}</script></body></html>`;
 }
