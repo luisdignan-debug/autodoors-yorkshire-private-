@@ -1,6 +1,13 @@
 const fs = require("node:fs");
 const http = require("node:http");
+const path = require("node:path");
 const crypto = require("node:crypto");
+
+// AY design system — loaded once at startup and injected into the page <style>.
+// Tokens must come before component styles (components reference --ay-* vars).
+const AY_DESIGN_TOKENS_CSS = fs.readFileSync(path.join(__dirname, "styles", "design-tokens.css"), "utf8");
+const AY_COMPONENTS_CSS = fs.readFileSync(path.join(__dirname, "styles", "components.css"), "utf8");
+const AY_DESIGN_SYSTEM_CSS = `${AY_DESIGN_TOKENS_CSS}\n${AY_COMPONENTS_CSS}`;
 const { parseEnquiryEmail, royalMailPostcodeFinderUrl, normalisePostcode } = require("../parser");
 const { scoreLead } = require("../leadScoring");
 const { findDuplicate } = require("../dedupe");
@@ -102,94 +109,22 @@ const STATUSES = [
   "Archived"
 ];
 
-const PWA_MANIFEST = {
-  name: "Autodoors Yorkshire",
-  short_name: "ADY",
-  description: "Trade operating dashboard for Autodoors Yorkshire",
-  start_url: "/today",
-  display: "standalone",
-  background_color: "#0f172a",
-  theme_color: "#14b8a6",
-  categories: ["business", "productivity"],
-  shortcuts: [
-    { name: "Today", short_name: "Today", url: "/today", description: "Open Today command centre" },
-    { name: "Add Lead", short_name: "Add", url: "/manual-lead", description: "Add a new enquiry" },
-    { name: "Leads", short_name: "Leads", url: "/leads", description: "Open lead command centre" },
-    { name: "Finance", short_name: "Finance", url: "/finance", description: "Open finance view" }
-  ],
-  icons: [
-    { src: "/icon-192.svg", sizes: "192x192", type: "image/svg+xml", purpose: "any maskable" },
-    { src: "/icon-512.svg", sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
-  ]
-};
-
-const SERVICE_WORKER_SCRIPT = `const CACHE_NAME = 'ady-pwa-v2';
-const APP_SHELL = ['/today','/dashboard','/leads','/finance','/offline.html','/manifest.webmanifest','/icon-192.svg','/icon-512.svg'];
-
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
-});
-
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
-});
-
-self.addEventListener('fetch', event => {
-  const { request } = event;
-  const url = new URL(request.url);
-  // Never cache non-GET, login/logout, or demo pages
-  if (request.method !== 'GET' || url.pathname === '/login' || url.pathname === '/logout' || url.searchParams.has('demo')) return;
-  // Cache-first for static assets
-  if (url.pathname.endsWith('.svg') || url.pathname.endsWith('.webmanifest')) {
-    event.respondWith(caches.match(request).then(r => r || fetch(request)));
-    return;
-  }
-  // Network-first for navigation
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then(res => { const c = res.clone(); caches.open(CACHE_NAME).then(cache => cache.put(request, c)); return res; })
-        .catch(() => caches.match(request).then(r => r || caches.match('/offline.html')))
-    );
-    return;
-  }
-});`;
-
-const OFFLINE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Offline - Autodoors Yorkshire</title><meta name="theme-color" content="#14b8a6"><style>*{box-sizing:border-box}body{font-family:Inter,Arial,sans-serif;margin:0;min-height:100svh;background:#0f172a;color:#fff;display:grid;place-items:center;padding:24px}.card{width:100%;max-width:420px;background:#111827;border:1px solid rgba(20,184,166,.35);border-radius:14px;padding:30px;box-shadow:0 24px 64px rgba(0,0,0,.35)}.mark{display:grid;place-items:center;width:48px;height:48px;background:#14b8a6;color:#062a26;border-radius:10px;font-weight:900;margin:0 0 20px}h1{font-size:24px;margin:0 0 10px}p{margin:0 0 22px;color:#d1d5db;line-height:1.5}button{width:100%;min-height:44px;border:0;border-radius:8px;background:#14b8a6;color:#062a26;font-weight:900;font-size:16px;cursor:pointer}button:hover{background:#2dd4bf}</style></head><body><main class="card"><div class="mark">ADY</div><h1>You are offline.</h1><p>Open the app when you have a connection.</p><button type="button" onclick="location.reload()">Reload</button></main></body></html>`;
-
-const ICON_192_SVG = appIconSvg(192);
-const ICON_512_SVG = appIconSvg(512);
+const COOKIE_NAME = "ady_session";
+const SESSION_EXPIRY_SECONDS = 7 * 24 * 3600;
 
 function startAppServer({ config, store, logger }) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost");
     try {
       if (url.pathname === "/health") return json(res, 200, { ok: true, service: "auto-doors-yorkshire-enquiry-manager" });
-      if (url.pathname === "/manifest.webmanifest" && req.method === "GET") return manifest(res);
-      if (url.pathname === "/sw.js" && req.method === "GET") return javascript(res, SERVICE_WORKER_SCRIPT);
-      if (url.pathname === "/offline.html" && req.method === "GET") return html(res, OFFLINE_PAGE);
-      if (url.pathname === "/icon-192.svg" && req.method === "GET") return svg(res, ICON_192_SVG);
-      if (url.pathname === "/icon-512.svg" && req.method === "GET") return svg(res, ICON_512_SVG);
-      if (url.pathname === "/robots.txt" && req.method === "GET") {
-        res.writeHead(200, { "content-type": "text/plain" });
-        return res.end("User-agent: *\nDisallow: /\n");
-      }
       if (url.pathname === "/webhooks/checkatrade" && req.method === "POST") {
         return handleWebhook(req, res, { config, store, logger });
       }
-      if (url.pathname === "/") return redirect(res, "/today");
-      if (url.pathname === "/login" && req.method === "GET") return html(res, loginPage(url));
+      if (url.pathname === "/login" && req.method === "GET") return html(res, loginPage(url.searchParams.get("next") || "/today"));
       if (url.pathname === "/login" && req.method === "POST") return handleLogin(req, res, config);
+      if (url.pathname === "/") return redirect(res, "/today");
+      if (!authorised(req, config)) return authChallenge(res, url.pathname + url.search);
       if (url.pathname === "/logout" && req.method === "POST") return handleLogout(res);
-      if (!authorised(req, config)) return authChallenge(res, url);
       ensureFinanceState(store.state);
       ensureOperationsState(store.state, config);
 
@@ -210,6 +145,7 @@ function startAppServer({ config, store, logger }) {
       if (url.pathname === "/invoices/create" && req.method === "POST") return createCustomerInvoiceFromRequest(req, res, { config, store, logger });
       if (url.pathname.startsWith("/invoices/") && req.method === "GET") return invoiceGet(req, res, { config, store, logger }, url.pathname);
       if (url.pathname.startsWith("/invoices/") && req.method === "POST") return invoicePost(req, res, { config, store, logger }, url.pathname);
+      if (url.pathname === "/money" && req.method === "GET") return html(res, moneyPage(config, activeStore));
       if (url.pathname === "/finance" && req.method === "GET") return html(res, financePage(config, activeStore));
       if (url.pathname === "/supplier-invoices" && req.method === "GET") return html(res, supplierInvoicesPage(config, activeStore, url.searchParams));
       if (url.pathname === "/finance/supplier-invoices" && req.method === "POST") return createSupplierInvoiceFromRequest(req, res, { config, store, logger });
@@ -230,6 +166,7 @@ function startAppServer({ config, store, logger }) {
       if (url.pathname === "/export/supplier-emails.csv" && req.method === "GET") return exportCsv(res, "supplier-emails.csv", supplierEmailRows(activeStore.state.supplierEmails || []));
       if (url.pathname === "/export/all-data.json" && req.method === "GET") return exportJson(res, "auto-doors-yorkshire-data.json", safeExportState(activeStore.state || {}));
       if (url.pathname === "/exports" && req.method === "GET") return html(res, exportsPage(config, activeStore));
+      if (url.pathname === "/jobs" && req.method === "GET") return html(res, jobsPage(filterLeads(activeStore.state.leads || [], url.searchParams), url.searchParams, activeStore.state));
       if (url.pathname === "/leads" && req.method === "GET") return html(res, leadsPage(filterLeads(activeStore.state.leads || [], url.searchParams), url.searchParams, activeStore.state));
       if (url.pathname === "/installations" && req.method === "GET") return html(res, installationsPage(activeStore.state.leads || [], activeStore.state));
       if (url.pathname === "/technician-schedule" && req.method === "GET") return html(res, technicianSchedulePage(config, activeStore, url.searchParams));
@@ -914,13 +851,14 @@ function dashboardPage(leads, config, supplierEmails = [], store = { state: { le
   const todayRows = dashboardTodayRows(counts, invoices, schedule);
   return pageShell(
     "Dashboard",
-    `<section class="page-intro"><div><h2>Management overview</h2><p>One calm view of pipeline, money, recent activity and any setup warnings.</p></div><div class="actions">
-      <a class="button" href="/today">Open Today</a>
-      <a class="button secondary" href="/finance">Finance</a>
-      <a class="button secondary" href="/leads">Leads</a>
+    `<section class="ay-section"><p class="ay-section-label">Financial snapshot</p><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Money to collect", value: formatMoney(finances.customerOutstanding), href: "/money" })}
+      ${aySummaryCard({ label: "Owed to suppliers", value: formatMoney(finances.supplierOutstanding), href: "/finance" })}
+      ${aySummaryCard({ label: "Accepted work", value: formatMoney(finances.acceptedJobsValue), href: "/jobs" })}
+      ${aySummaryCard({ label: "Net forecast", value: formatMoney(finances.netCashPosition), href: "/finance" })}
+      ${aySummaryCard({ label: "Overdue customer", value: formatMoney(finances.overdueCustomerPayments), href: "/money" })}
     </div></section>
-    <section class="panel calm"><div class="panel-heading"><h2>Financial snapshot</h2><a class="button secondary compact-button" href="/finance">Detailed finance</a></div><section class="summary-strip">${moneyCockpitCards(finances).join("")}</section></section>
-    <details class="drawer panel"><summary>Pipeline board</summary><div class="drawer-body">${pipelineBoard(prepared)}</div></details>
+    ${pipelineBoard(prepared)}
     ${valueTrackerSection(store.state || {}, prepared, finances)}
     <section class="panel"><div class="panel-heading"><h2>Latest activity</h2><div class="actions"><a class="button secondary compact-button" href="/leads">View all</a><form method="post" action="/system/clear-activity"><button class="button secondary compact-button">Clear activity</button></form></div></div>${recentEvents.length ? activityList(recentEvents.slice(0, 6)) : `<p class="muted">No recent activity yet.</p>`}</section>
     <section class="panel compact-warning-panel"><div class="panel-heading"><h2>Setup / system warning</h2><a class="button secondary compact-button" href="/system">System</a></div>${dashboardWarningSummary(config, store)}</section>
@@ -931,7 +869,7 @@ function dashboardPage(leads, config, supplierEmails = [], store = { state: { le
       ${criticalFocus(prepared, actionsToday)}
       <section class="panel"><h2>Active queues</h2>${activeQueues.length ? `<section class="metrics queue-grid">${activeQueues.map(queueCard).join("")}</section>` : `<p class="muted">No active queues. The board is clear.</p>`}${quietQueues.length ? `<details><summary>Quiet queues</summary><section class="metrics compact-queues">${quietQueues.map(queueCard).join("")}</section></details>` : ""}</section>
       <section class="split"><div>${breakdown("Leads by source", leads, (lead) => lead.sourcePlatform || lead.source || "Unknown")}</div><div>${breakdown("Leads by status", leads, (lead) => lead.status || "Unknown")}</div></section>
-      <h2>Latest 20 leads</h2><div class="table-scroll">${leadTable(latest, { state: store.state })}</div>
+      <h2>Latest 20 leads</h2>${leadTable(latest, { state: store.state })}
     </div></details>`
   );
 }
@@ -941,43 +879,35 @@ function todayPage(config, store) {
   ensureOperationsState(store.state || {}, config);
   const leads = (store.state.leads || []).map((lead) => ensureJobFields(lead));
   const items = commercialActionItems(store.state || {}, config);
+  const summary = financeSummary(leads, store.state);
+  const atRisk = items.filter((item) => item.tone === "red").length;
   const groups = [
-    ["Urgent customer actions", "customer"],
-    ["Urgent supplier actions", "supplier"],
-    ["Installation actions", "install"],
-    ["Payment actions", "payment"],
-    ["Overdue / risk items", "risk"]
+    ["Overdue & at risk", "risk"],
+    ["Customer actions", "customer"],
+    ["Money & payments", "payment"],
+    ["Supplier actions", "supplier"],
+    ["Installations", "install"]
   ];
-  const todayGroups = groups.map(([title, group]) => {
+  const summaryGrid = `<div class="ay-summary-grid">`
+    + aySummaryCard({ label: "Jobs to action", value: String(items.length), sub: atRisk ? `${atRisk} at risk` : "All on track", href: "/today" })
+    + aySummaryCard({ label: "Money to collect", value: formatMoney(summary.customerOutstanding), href: "/money" })
+    + aySummaryCard({ label: "Owed to suppliers", value: formatMoney(summary.supplierOutstanding), href: "/finance" })
+    + aySummaryCard({ label: "Jobs at risk", value: String(atRisk), href: "/today" })
+    + `</div>`;
+  const sections = groups.map(([label, group]) => {
     const groupItems = items.filter((item) => item.group === group);
-    const tone = groupItems.some((item) => item.tone === "red") ? "red" : groupItems.length ? "amber" : "green";
-    const quiet = groupItems.length ? "" : " quiet";
-    const open = groupItems.length ? " open" : "";
-    return `<details class="today-group-card ${escapeAttr(tone)}${quiet}"${open}>
-      <summary>
-        <span class="tgc-label">${escapeHtml(title)}</span>
-        <span class="badge ${escapeAttr(tone)}">${groupItems.length}</span>
-      </summary>
-      <div class="tgc-body">
-        ${todayItemCards(groupItems)}
-      </div>
-    </details>`;
-  });
-  return pageShell(
-    "Today",
-    `${store.demo ? demoBanner() : ""}
-    <section class="page-intro"><div><h2>Today command centre</h2><p>Open this every morning. It shows the work, money and supplier actions most likely to cause missed revenue.</p></div><div class="actions"><a class="button secondary" href="/dashboard${store.demo ? "?demo=true" : ""}">Management overview</a></div></section>
-    <section class="today-money-strip">
-      ${metricCard("Jobs requiring action", items.length, "/today", items.length ? "amber" : "green")}
-      ${metricCard("Customer balance", financeSummary(leads, store.state).customerOutstanding, "/finance", "amber", true)}
-      ${metricCard("Supplier owed", financeSummary(leads, store.state).supplierOutstanding, "/finance", "red", true)}
-      ${metricCard("Jobs at risk", items.filter((item) => item.tone === "red").length, "/today", items.some((item) => item.tone === "red") ? "red" : "green")}
-    </section>
-    <section class="today-accordion">
-      ${todayGroups.join("")}
-    </section>
-    <details class="drawer"><summary>Weekly and monthly preview reports</summary><div class="drawer-body">${summaryPreviewReports(store.state || {}, leads)}</div></details>`
-  );
+    if (!groupItems.length) return "";
+    return `<section class="ay-section"><p class="ay-section-label">${escapeHtml(label)} (${groupItems.length})</p>`
+      + `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${groupItems.map(ayTodayItemCard).join("")}</div></section>`;
+  }).join("");
+  const body = `${store.demo ? demoBanner() : ""}`
+    + `<section class="ay-section">${summaryGrid}</section>`
+    + (items.length
+        ? sections
+        : ayAllClear("All caught up", "No customer, supplier, install or payment actions are outstanding right now."))
+    + `<hr class="ay-divider"><details><summary class="ay-section-label" style="cursor:pointer;list-style:revert">Weekly and monthly preview reports</summary>`
+    + `<div style="margin-top:var(--ay-space-4)">${summaryPreviewReports(store.state || {}, leads)}</div></details>`;
+  return pageShell("Today", body);
 }
 
 function demoPage(config) {
@@ -1032,16 +962,16 @@ function supplierInvoicesPage(config, store, params = new URLSearchParams()) {
   return pageShell(
     "Supplier Invoices",
     `<section class="page-intro"><div><h2>Supplier invoice control</h2><p>See what needs paying, what is part-paid, and what is overdue without digging through Finance.</p></div><div class="actions"><a class="button" href="/finance#supplier-invoices">Add supplier invoice</a><a class="button secondary" href="/export/supplier-invoices.csv">Export CSV</a></div></section>
-    <section class="overview mini-overview">
-      ${metricCard("Payment due", allInvoices.filter((invoice) => money(invoice.amountOutstanding) > 0 && !isPastDate(invoice.dueDate)).length, "/supplier-invoices?filter=due", "amber")}
-      ${metricCard("Part paid", allInvoices.filter((invoice) => invoice.paymentStatus === "Part paid").length, "/supplier-invoices?filter=part-paid", "amber")}
-      ${metricCard("Overdue", allInvoices.filter((invoice) => money(invoice.amountOutstanding) > 0 && isPastDate(invoice.dueDate)).length, "/supplier-invoices?filter=overdue", "red")}
-      ${metricCard("Paid", allInvoices.filter((invoice) => money(invoice.amountOutstanding) <= 0).length, "/supplier-invoices?filter=paid", "green")}
-      ${metricCard("Owed to supplier", allInvoices.reduce((total, invoice) => total + money(invoice.amountOutstanding), 0), "/supplier-invoices", "red", true)}
-    </section>
-    <nav class="quick-filters">${[["Payment due", "due"], ["Part paid", "part-paid"], ["Overdue", "overdue"], ["Paid", "paid"], ["Archived", "archived"], ["All", "all"]].map(([label, value]) => `<a class="${filter === value ? "active" : ""}" href="/supplier-invoices?filter=${value}">${escapeHtml(label)}</a>`).join("")}</nav>
-    <section class="panel"><h2>${escapeHtml(statusLabel(filter))}</h2><div class="table-scroll">${supplierInvoiceTable(invoices, leads)}</div></section>
-    <details class="drawer"><summary>Add or correct supplier invoice</summary><div class="drawer-body"><section class="split"><article><h2>Add supplier invoice</h2>${supplierInvoiceForm(leads)}</article><article><h2>Supplier payments</h2><div class="table-scroll">${supplierPaymentTable((state.supplierPayments || []).filter((payment) => !payment.archivedAt).slice(-15).reverse(), allInvoices)}</div></article></section></div></details>`
+    <section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Payment due", value: String(allInvoices.filter((invoice) => money(invoice.amountOutstanding) > 0 && !isPastDate(invoice.dueDate)).length), href: "/supplier-invoices?filter=due" })}
+      ${aySummaryCard({ label: "Part paid", value: String(allInvoices.filter((invoice) => invoice.paymentStatus === "Part paid").length), href: "/supplier-invoices?filter=part-paid" })}
+      ${aySummaryCard({ label: "Overdue", value: String(allInvoices.filter((invoice) => money(invoice.amountOutstanding) > 0 && isPastDate(invoice.dueDate)).length), href: "/supplier-invoices?filter=overdue" })}
+      ${aySummaryCard({ label: "Paid", value: String(allInvoices.filter((invoice) => money(invoice.amountOutstanding) <= 0).length), href: "/supplier-invoices?filter=paid" })}
+      ${aySummaryCard({ label: "Owed to supplier", value: formatMoney(allInvoices.reduce((total, invoice) => total + money(invoice.amountOutstanding), 0)), href: "/supplier-invoices" })}
+    </div></section>
+    ${ayFilterTabs([["Payment due", "due"], ["Part paid", "part-paid"], ["Overdue", "overdue"], ["Paid", "paid"], ["Archived", "archived"], ["All", "all"]].map(([label, value]) => ({ label, href: `/supplier-invoices?filter=${value}`, active: filter === value })), "Supplier invoice filters")}
+    <section class="panel"><h2>${escapeHtml(statusLabel(filter))}</h2>${supplierInvoiceTable(invoices, leads)}</section>
+    <details class="drawer"><summary>Add or correct supplier invoice</summary><div class="drawer-body"><section class="split"><article><h2>Add supplier invoice</h2>${supplierInvoiceForm(leads)}</article><article><h2>Supplier payments</h2>${supplierPaymentTable((state.supplierPayments || []).filter((payment) => !payment.archivedAt).slice(-15).reverse(), allInvoices)}</article></section></div></details>`
   );
 }
 
@@ -1074,7 +1004,7 @@ function statusPage(config, store) {
   return pageShell(
     "System Status",
     `<section class="page-intro"><div><h2>Operating status</h2><p>Live health, storage and safety switches for the dashboard.</p></div><a class="button secondary" href="/system">Storage audit</a></section>
-    <section class="panel"><h2>Operating status</h2><section class="metrics status-grid">${checks.map(statusCard).join("")}</section></section>
+    <section class="ay-section"><p class="ay-section-label">Operating status</p>${aySystemGrid(checks.map(ayCheckCard))}</section>
     <section class="split">
       <article><h2>Current configuration</h2>
         <p><strong>Business:</strong> ${escapeHtml(config.businessName)}</p>
@@ -1102,7 +1032,7 @@ function systemPage(config, store) {
   return pageShell(
     "System",
     `<section class="page-intro"><div><h2>Production safety</h2><p>Storage, exports and configuration checks before using live technician data.</p></div><div class="actions"><a class="button secondary" href="/status">Operating status</a><a class="button" href="/export/tracker">Export workbook</a></div></section>
-    <section class="panel calm"><h2>Health dashboard</h2><section class="metrics status-grid">${[...checks.slice(0, 3), ...readiness.slice(4, 9)].map(statusCard).join("")}</section></section>
+    <section class="ay-section"><p class="ay-section-label">Health dashboard</p>${aySystemGrid([...checks.slice(0, 3), ...readiness.slice(4, 9)].map(ayCheckCard))}</section>
     <section class="panel calm"><div class="panel-heading"><div><h2>Download my data</h2><p class="muted">Commercial promise: the trader can leave and take their operational data.</p></div><a class="button compact-button" href="/export/all-data.json">All data</a></div><div class="actions">
       <a class="button secondary" href="/export/leads.csv">Leads CSV</a>
       <a class="button secondary" href="/export/jobs.csv">Jobs CSV</a>
@@ -1140,25 +1070,24 @@ function settingsPage(config, store) {
   const readiness = integrationReadiness(config, store);
   return pageShell(
     "Settings",
-    `<section class="page-intro"><div><h2>Business setup</h2><p>Company, invoice, payment and integration readiness settings for live operation.</p></div><a class="button secondary" href="/system">System status</a></section>
-    <section class="panel"><h2>Setup checklist</h2><section class="metrics status-grid">${readiness.map(statusCard).join("")}</section>${warnings.length ? `<ul class="warning-list">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : `<p class="status-safe">Invoice settings are ready to issue documents.</p>`}</section>
+    `<section class="ay-section"><p class="ay-section-label">Setup checklist</p>${aySystemGrid(readiness.map(ayCheckCard))}${warnings.length ? `<ul class="warning-list" style="margin-top:var(--ay-space-4)">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : `<p class="status-safe" style="margin-top:var(--ay-space-4)">Invoice settings are ready to issue documents.</p>`}</section>
     <section class="panel form-panel"><div class="panel-heading"><div><h2>Company invoice settings</h2><p class="muted">Fill the basics first. Payment and invoice details are kept nearby for issuing customer invoices safely.</p></div><button class="button secondary" type="submit" form="company-settings-form">Save settings</button></div>
       <form id="company-settings-form" method="post" action="/settings/company" class="stacked-form">
         <div class="settings-groups">
-          <details class="settings-group-details" open>
-            <summary>Business details</summary>
-            <div class="settings-group-body"><div class="field-grid">
+          <section class="settings-group">
+            <h3>Business details</h3>
+            <div class="field-grid">
               ${labeledInput("companyLegalName", "Company legal name", settings.companyLegalName)}
               ${labeledInput("tradingName", "Trading name", settings.tradingName)}
               ${labeledInput("companyNumber", "Company number", settings.companyNumber)}
               ${labeledInput("phone", "Phone", settings.phone)}
               ${labeledInput("email", "Email", settings.email, "email")}
               ${labeledInput("website", "Website", settings.website)}
-            </div></div>
-          </details>
-          <details class="settings-group-details">
-            <summary>Invoice settings</summary>
-            <div class="settings-group-body"><div class="field-grid">
+            </div>
+          </section>
+          <section class="settings-group">
+            <h3>Invoice settings</h3>
+            <div class="field-grid">
               ${labeledInput("vatRegistrationNumber", "VAT registration number", settings.vatRegistrationNumber)}
               <label><span>VAT registered?</span><select name="vatRegistered"><option value="false" ${!settings.vatRegistered ? "selected" : ""}>No</option><option value="true" ${settings.vatRegistered ? "selected" : ""}>Yes</option></select></label>
               ${labeledInput("defaultVatRate", "Default VAT rate", settings.defaultVatRate)}
@@ -1166,22 +1095,21 @@ function settingsPage(config, store) {
               ${labeledInput("invoicePrefix", "Invoice prefix", settings.invoicePrefix)}
               ${labeledInput("nextInvoiceNumber", "Next invoice number", settings.nextInvoiceNumber, "number")}
               ${labeledInput("noVatNote", "Non-VAT note", settings.noVatNote)}
-            </div></div>
-          </details>
-          <details class="settings-group-details">
-            <summary>Payment details</summary>
-            <div class="settings-group-body"><div class="field-grid">
+            </div>
+          </section>
+          <section class="settings-group">
+            <h3>Payment details</h3>
+            <div class="field-grid">
               ${labeledInput("bankAccountName", "Bank account name", settings.bankAccountName)}
               ${labeledInput("sortCode", "Sort code", settings.sortCode)}
               ${labeledInput("accountNumber", "Account number", settings.accountNumber)}
               ${labeledInput("paymentReferenceFormat", "Payment reference format", settings.paymentReferenceFormat)}
-            </div></div>
-          </details>
-          <details class="settings-group-details"><summary>Addresses and branding</summary><div class="settings-group-body">
+            </div>
+          </section>
+          <details class="advanced-panel" open><summary>Addresses and branding</summary>
             <label><span>Registered office address</span><textarea name="registeredOfficeAddress">${escapeHtml(settings.registeredOfficeAddress || "")}</textarea></label>
             <label><span>Trading address</span><textarea name="tradingAddress">${escapeHtml(settings.tradingAddress || "")}</textarea></label>
             ${labeledInput("logoPath", "Logo path", settings.logoPath)}
-          </div>
           </details>
         </div>
         <button>Save settings</button>
@@ -1215,9 +1143,9 @@ function financePage(config, store) {
       ${summaryCard("Overdue supplier", summary.overdueSupplierPayments, summary.overdueSupplierPayments ? "red" : "green", true)}
     </section></section>
     <nav class="tab-list"><a href="#customer-balances">Customer balances</a><a href="#supplier-invoices">Supplier invoices</a><a href="#job-margin">Job margin</a><a href="#payments">Payments</a><a href="#exports">Exports</a></nav>
-    <section id="customer-balances" class="panel"><h2>Customer payments outstanding</h2><div class="table-scroll">${financeJobTable(summary.jobFinancials.filter((item) => item.finance.customerOutstanding > 0))}</div></section>
-    <section id="supplier-invoices" class="panel"><h2>Supplier invoices outstanding</h2><div class="table-scroll">${supplierInvoiceTable(supplierInvoices.filter((invoice) => money(invoice.amountOutstanding) > 0), leads)}</div></section>
-    <details id="job-margin" class="drawer"><summary>Job profitability</summary><div class="drawer-body"><div class="table-scroll">${financeJobTable(summary.jobFinancials)}</div></div></details>
+    <section id="customer-balances" class="panel"><h2>Customer payments outstanding</h2>${financeJobTable(summary.jobFinancials.filter((item) => item.finance.customerOutstanding > 0))}</section>
+    <section id="supplier-invoices" class="panel"><h2>Supplier invoices outstanding</h2>${supplierInvoiceTable(supplierInvoices.filter((invoice) => money(invoice.amountOutstanding) > 0), leads)}</section>
+    <details id="job-margin" class="drawer"><summary>Job profitability</summary><div class="drawer-body">${financeJobTable(summary.jobFinancials)}</div></details>
     <details class="drawer"><summary>Customer invoice control</summary><div class="drawer-body"><section class="metrics">
       ${metricCard("Invoices to issue", invoiceStats.invoicesToIssue, "/invoices?status=draft", invoiceStats.invoicesToIssue ? "amber" : "green")}
       ${metricCard("Unpaid invoices", invoiceStats.unpaidAmount, "/invoices", invoiceStats.unpaidAmount ? "amber" : "green", true)}
@@ -1233,11 +1161,82 @@ function financePage(config, store) {
     <details id="payments" class="drawer"><summary>Payments and warnings</summary><div class="drawer-body"><section class="split">
       <article><h2>Overdue payment warnings</h2>${overdueWarnings(summary)}</article>
       <article><h2>Supplier liabilities by supplier</h2>${supplierLiabilityList(summary.supplierLiabilitiesBySupplier)}</article>
-      <article><h2>Latest customer payments</h2><div class="table-scroll">${customerPaymentTable(payments.slice(-20).reverse(), leads)}</div></article>
-      <article><h2>Latest supplier payments</h2><div class="table-scroll">${supplierPaymentTable(supplierPayments.slice(-20).reverse(), supplierInvoices)}</div></article>
+      <article><h2>Latest customer payments</h2>${customerPaymentTable(payments.slice(-20).reverse(), leads)}</article>
+      <article><h2>Latest supplier payments</h2>${supplierPaymentTable(supplierPayments.slice(-20).reverse(), supplierInvoices)}</article>
     </section></div></details>
     <section id="exports" class="panel"><h2>Exports</h2><div class="actions"><a class="button secondary" href="/export/customer-invoices.csv">Invoice CSV</a><a class="button secondary" href="/export/payments.csv">Payments CSV</a><a class="button secondary" href="/export/supplier-invoices.csv">Supplier invoices CSV</a><a class="button secondary" href="/export/tracker">Workbook</a></div></section>`
   );
+}
+
+function moneyPage(config, store) {
+  const state = ensureFinanceState(store.state || {});
+  ensureOperationsState(state, config);
+  const leads = (state.leads || []).map((lead) => ensureJobFields(lead));
+  const summary = financeSummary(leads, state);
+  const customerBalances = summary.jobFinancials
+    .filter((item) => item.finance.customerOutstanding > 0)
+    .sort((a, b) => b.finance.customerOutstanding - a.finance.customerOutstanding);
+  const supplierBills = (state.supplierInvoices || [])
+    .filter((invoice) => !invoice.archivedAt)
+    .map((invoice) => calculateSupplierInvoiceBalance(invoice, state))
+    .filter((invoice) => money(invoice.amountOutstanding) > 0)
+    .sort((a, b) => String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")));
+  const invoicesReady = invoiceSummary(state);
+  return pageShell(
+    "Money",
+    `<section class="page-intro"><div><h2>Money to collect and bills to pay</h2><p>Owner-friendly money control. Use Finance when you need the deeper tables and exports.</p></div><div class="actions"><a class="button" href="/finance">Open Finance</a><a class="button secondary" href="/invoices">Customer invoices</a></div></section>
+    <section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Money to collect", value: formatMoney(summary.customerOutstanding), href: "/money#customer-balances" })}
+      ${aySummaryCard({ label: "Overdue customer balances", value: formatMoney(summary.overdueCustomerPayments), href: "/money#customer-balances" })}
+      ${aySummaryCard({ label: "Supplier bills due", value: formatMoney(summary.supplierOutstanding), href: "/money#supplier-bills" })}
+      ${aySummaryCard({ label: "Net position estimate", value: formatMoney(summary.netCashPosition), href: "/finance#job-margin" })}
+    </div></section>
+    <section class="cockpit-grid">
+      <section id="customer-balances" class="panel calm"><div class="panel-heading"><h2>Customer balances</h2><a class="button secondary compact-button" href="/finance#customer-balances">Detailed view</a></div>${customerBalanceCards(customerBalances)}</section>
+      <section id="supplier-bills" class="panel calm"><div class="panel-heading"><h2>Supplier bills</h2><a class="button secondary compact-button" href="/supplier-invoices">Supplier invoices</a></div>${supplierBillCards(supplierBills, leads)}</section>
+    </section>
+    <section class="panel"><div class="panel-heading"><h2>Payment requests ready</h2><a class="button secondary compact-button" href="/invoices">Invoices</a></div><section class="summary-strip">
+      ${summaryCard("Draft invoices", invoicesReady.invoicesToIssue, invoicesReady.invoicesToIssue ? "amber" : "green")}
+      ${summaryCard("Unpaid invoices", invoicesReady.unpaidAmount, invoicesReady.unpaidAmount ? "amber" : "green", true)}
+      ${summaryCard("Overdue invoices", invoicesReady.overdueAmount, invoicesReady.overdueAmount ? "red" : "green", true)}
+      ${summaryCard("Paid invoices", invoicesReady.paidAmount, "green", true)}
+    </section></section>
+    <details class="drawer"><summary>Record payments and export money data</summary><div class="drawer-body"><section class="split">
+      <article><h2>Record customer payment</h2>${customerPaymentForm(leads, "", state)}</article>
+      <article><h2>Record supplier payment</h2>${supplierPaymentForm(supplierBills)}</article>
+      <article><h2>Exports</h2><div class="actions"><a class="button secondary" href="/export/payments.csv">Customer payments CSV</a><a class="button secondary" href="/export/supplier-payments.csv">Supplier payments CSV</a><a class="button secondary" href="/export/jobs.csv">Job margins CSV</a></div></article>
+    </section></div></details>`
+  );
+}
+
+function customerBalanceCards(items) {
+  if (!items.length) return ayEmptyState({ title: "All balances clear", body: "No customer balances need chasing." });
+  return `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${items.slice(0, 10).map(({ lead, finance }) => {
+    const id = encodeURIComponent(lead.id);
+    const meta = [lead.customerPostcode, finance.overdue_customer_amount ? "" : lead.next_best_action].filter(Boolean).map((part) => escapeHtml(String(part))).join(" · ");
+    return `<div class="ay-job-card">
+      <div class="ay-job-card__main">
+        <div class="ay-job-card__top"><span class="ay-job-card__name">${escapeHtml(lead.customerName || lead.customerPostcode || lead.id)}</span>${finance.overdue_customer_amount ? ayBadge({ variant: "red", label: "Payment overdue" }) : ayStageBadge(lead.status)}</div>
+        ${meta ? `<p class="ay-job-card__meta">${meta}</p>` : ""}
+      </div>
+      <div class="ay-job-card__actions"><span class="ay-job-card__value">${escapeHtml(formatMoney(finance.customerOutstanding))}</span>${ayButton({ label: "Open job", href: `/leads/${id}`, variant: "primary", size: "sm" })}${ayButton({ label: "Create invoice", href: `/invoices/new?leadId=${id}&type=balance`, variant: "ghost", size: "sm" })}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function supplierBillCards(invoices, leads) {
+  if (!invoices.length) return ayEmptyState({ title: "No supplier bills", body: "No supplier bills are outstanding." });
+  const leadNames = new Map((leads || []).map((lead) => [lead.id, lead.customerName || lead.customerPostcode || lead.id]));
+  return `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${invoices.slice(0, 10).map((invoice) => {
+    const meta = [invoice.invoiceReference || "No reference", invoice.leadId ? (leadNames.get(invoice.leadId) || invoice.leadId) : "", invoice.dueDate ? `Due ${invoice.dueDate}` : "No due date"].filter(Boolean).map((part) => escapeHtml(String(part))).join(" · ");
+    return `<div class="ay-job-card">
+      <div class="ay-job-card__main">
+        <div class="ay-job-card__top"><span class="ay-job-card__name">${escapeHtml(invoice.supplierName || "Supplier")}</span>${isPastDate(invoice.dueDate) ? ayBadge({ variant: "red", label: "Overdue" }) : ayBadge({ variant: "amber", label: "Due" })}</div>
+        <p class="ay-job-card__meta">${meta}</p>
+      </div>
+      <div class="ay-job-card__actions"><span class="ay-job-card__value">${escapeHtml(formatMoney(invoice.amountOutstanding))}</span>${ayButton({ label: "Review", href: "/supplier-invoices", variant: "primary", size: "sm" })}${ayButton({ label: "Record payment", href: "/finance#payments", variant: "ghost", size: "sm" })}</div>
+    </div>`;
+  }).join("")}</div>`;
 }
 
 function invoicesPage(config, store, params = new URLSearchParams()) {
@@ -1251,14 +1250,14 @@ function invoicesPage(config, store, params = new URLSearchParams()) {
   return pageShell(
     "Invoices",
     `<section class="page-intro"><div><h2>Customer invoicing</h2><p>Create professional customer invoices, PDFs and approval-only email drafts.</p></div><div class="actions"><a class="button" href="/invoices/new">New invoice</a><a class="button secondary" href="/settings">Invoice settings</a><a class="button secondary" href="/export/customer-invoices.csv">Export CSV</a></div></section>
-    <section class="overview mini-overview">
-      ${metricCard("Draft invoices", summary.invoicesToIssue, "/invoices?status=draft", summary.invoicesToIssue ? "amber" : "green")}
-      ${metricCard("Unpaid", summary.unpaidAmount, "/invoices", summary.unpaidAmount ? "amber" : "green", true)}
-      ${metricCard("Overdue", summary.overdueAmount, "/invoices?status=overdue", summary.overdueAmount ? "red" : "green", true)}
-      ${metricCard("Paid", summary.paidAmount, "/invoices?status=paid", "green", true)}
-    </section>
-    <nav class="quick-filters">${["", "draft", "issued", "sent", "paid", "overdue", "void"].map((status) => `<a class="${statusFilter === status ? "active" : ""}" href="/invoices${status ? `?status=${status}` : ""}">${escapeHtml(status ? statusLabel(status) : "All")}</a>`).join("")}</nav>
-    <section class="panel"><h2>Customer invoices</h2><div class="table-scroll">${invoiceTable(invoices, leads)}</div></section>`
+    <section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Draft invoices", value: String(summary.invoicesToIssue), href: "/invoices?status=draft" })}
+      ${aySummaryCard({ label: "Unpaid", value: formatMoney(summary.unpaidAmount), href: "/invoices" })}
+      ${aySummaryCard({ label: "Overdue", value: formatMoney(summary.overdueAmount), href: "/invoices?status=overdue" })}
+      ${aySummaryCard({ label: "Paid", value: formatMoney(summary.paidAmount), href: "/invoices?status=paid" })}
+    </div></section>
+    ${ayFilterTabs(["", "draft", "issued", "sent", "paid", "overdue", "void"].map((status) => ({ label: status ? statusLabel(status) : "All", href: `/invoices${status ? `?status=${status}` : ""}`, active: statusFilter === status })), "Invoice filters")}
+    <section class="panel"><h2>Customer invoices</h2>${invoiceTable(invoices, leads)}</section>`
   );
 }
 
@@ -1305,17 +1304,17 @@ function invoiceDetailPage(invoice, config, store) {
           ${selectInput("payment_method", CUSTOMER_PAYMENT_METHODS, "Bank transfer")}
           ${labeledInput("payment_date", "Payment date", new Date().toISOString().slice(0, 10), "date")}
           ${labeledInput("reference", "Payment reference", invoice.invoice_number || "")}
-          <div class="actions"><button>Mark paid / part-paid</button></div>
+          <button>Mark paid / part-paid</button>
         </form>
         <div class="actions"><form method="post" action="/invoices/${encodeURIComponent(invoice.invoice_id)}/archive"><button class="button secondary">Archive</button></form><form method="post" action="/invoices/${encodeURIComponent(invoice.invoice_id)}/void" onsubmit="return confirm('Void this invoice? The number will not be reused.');"><button class="danger-button">Void</button></form></div>
       </article>
-      <details class="drawer panel"><summary>Email preview (copy and send manually)</summary><div class="drawer-body">
+      <article><h2>Email preview</h2>
         <p class="muted">${canSend ? "Email sending is enabled, but still requires this button." : "Safe mode: email sending is disabled. Copy text or download PDF."}</p>
         ${labeledInput("email_subject_preview", "Subject", emailDraft.subject)}
         <textarea id="invoice-email">${escapeHtml(emailDraft.body)}</textarea>
-        <div class="actions"><button onclick="navigator.clipboard.writeText(document.getElementById('invoice-email').value);return false;">Copy email text</button></div>
-        <div class="actions"><form method="post" action="/invoices/${encodeURIComponent(invoice.invoice_id)}/send-email"><button ${canSend ? "" : "disabled"}>${canSend ? "Send invoice email" : "Sending disabled"}</button></form></div>
-      </div></details>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('invoice-email').value);return false;">Copy email text</button>
+        <form method="post" action="/invoices/${encodeURIComponent(invoice.invoice_id)}/send-email"><button ${canSend ? "" : "disabled"}>${canSend ? "Send invoice email" : "Sending disabled"}</button></form>
+      </article>
     </section>
     <section class="panel"><h2>Edit draft details</h2>${invoiceEditForm(invoice, state.companySettings)}</section>`
   );
@@ -1327,19 +1326,17 @@ function technicianSchedulePage(config, store, params = new URLSearchParams()) {
   const workOrders = state.workOrders || [];
   const filter = params.get("filter") || "today";
   const filtered = filterWorkOrders(workOrders, filter);
-  const todaysWorkOrders = workOrders.filter((order) => isScheduledToday(order.scheduled_start));
   return pageShell(
     "Technician Schedule",
     `<section class="page-intro"><div><h2>Technician schedule</h2><p>Book work, preview daily/weekly digests, and export iOS-compatible calendar files.</p></div><div class="actions"><a class="button" href="/technician-schedule/daily">Daily preview</a><a class="button secondary" href="/technician-schedule/weekly">Weekly preview</a></div></section>
-    <section class="overview mini-overview">
-      ${metricCard("Today", summary.today, "/technician-schedule?filter=today", summary.today ? "green" : "grey")}
-      ${metricCard("Tomorrow", summary.tomorrow, "/technician-schedule?filter=tomorrow", summary.tomorrow ? "green" : "grey")}
-      ${metricCard("This week", summary.thisWeek, "/technician-schedule?filter=week", summary.thisWeek ? "green" : "grey")}
-      ${metricCard("Unscheduled", summary.unscheduled, "/technician-schedule?filter=unscheduled", summary.unscheduled ? "amber" : "green")}
-      ${metricCard("Digest not sent", summary.digestNotSent, "/technician-schedule?filter=today", summary.digestNotSent ? "amber" : "green")}
-    </section>
-    <nav class="quick-filters">${["today", "tomorrow", "week", "unscheduled", "completed", "all"].map((item) => `<a class="${filter === item ? "active" : ""}" href="/technician-schedule?filter=${item}">${escapeHtml(statusLabel(item))}</a>`).join("")}</nav>
-    <section class="panel"><div class="panel-heading"><h2>Today's work</h2><a class="button secondary compact-button" href="/technician-schedule/daily">Daily preview</a></div>${workOrderCards(todaysWorkOrders, state, config)}</section>
+    <section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Today", value: String(summary.today), href: "/technician-schedule?filter=today" })}
+      ${aySummaryCard({ label: "Tomorrow", value: String(summary.tomorrow), href: "/technician-schedule?filter=tomorrow" })}
+      ${aySummaryCard({ label: "This week", value: String(summary.thisWeek), href: "/technician-schedule?filter=week" })}
+      ${aySummaryCard({ label: "Unscheduled", value: String(summary.unscheduled), href: "/technician-schedule?filter=unscheduled" })}
+      ${aySummaryCard({ label: "Digest not sent", value: String(summary.digestNotSent), href: "/technician-schedule?filter=today" })}
+    </div></section>
+    ${ayFilterTabs(["today", "tomorrow", "week", "unscheduled", "completed", "all"].map((item) => ({ label: statusLabel(item), href: `/technician-schedule?filter=${item}`, active: filter === item })), "Schedule filters")}
     <section class="panel"><div class="panel-heading"><h2>Work orders needing technician update</h2><div class="actions"><a class="button compact-button" href="/technician-schedule/daily">Preview daily message</a><a class="button secondary compact-button" href="/technician-schedule/weekly">Preview weekly</a></div></div>${workOrderCards(filtered, state, config)}</section>
     <details class="drawer"><summary>Create work order or edit technician setup</summary><div class="drawer-body"><section class="split">
       <article><h2>Create work order</h2>${workOrderForm(state.leads || [], state.technicians || [])}</article>
@@ -1358,7 +1355,7 @@ function technicianDigestPage(config, store, days, params = new URLSearchParams(
     days > 1 ? "Weekly Schedule Preview" : "Daily Schedule Preview",
     `<section class="page-intro"><div><h2>${escapeHtml(digest.title)}</h2><p>Preview only. Sending remains disabled unless the feature flag and provider setup are deliberately enabled.</p></div><a class="button secondary" href="/technician-schedule">Back to schedule</a></section>
     <section class="split">
-      <article><h2>Message preview</h2><textarea id="digest-message" rows="10" autocorrect="off">${escapeHtml(digest.body)}</textarea><button onclick="navigator.clipboard.writeText(this.previousElementSibling.value)">Copy</button>${whatsappLink(to, digest.body) ? `<a class="button secondary" href="${escapeAttr(whatsappLink(to, digest.body))}" target="_blank" rel="noreferrer">Open WhatsApp manually</a>` : ""}</article>
+      <article><h2>Message preview</h2><textarea id="digest-message">${escapeHtml(digest.body)}</textarea><button onclick="navigator.clipboard.writeText(document.getElementById('digest-message').value);return false;">Copy digest</button>${whatsappLink(to, digest.body) ? `<a class="button secondary" href="${escapeAttr(whatsappLink(to, digest.body))}" target="_blank" rel="noreferrer">Open WhatsApp manually</a>` : ""}</article>
       <article><h2>Sending status</h2>
         ${statusCard({ label: "SMS", value: status.sms.enabled ? "Enabled" : "Disabled", tone: status.sms.enabled ? "amber" : "green", detail: status.sms.detail })}
         ${statusCard({ label: "WhatsApp", value: status.whatsapp.enabled ? "Enabled" : "Disabled", tone: status.whatsapp.enabled ? "amber" : "green", detail: status.whatsapp.detail })}
@@ -2039,9 +2036,9 @@ function customerInvoiceForm(leads, lead = {}, settings = {}, selectedType = "")
     ${leadSelect(leads, lead.id || "")}
     <div class="field-grid">
       ${selectInput("invoice_type", INVOICE_TYPES, type)}
-      ${labeledInput("customer_name", "Customer name", lead.customerName || "", "text", "", { autocomplete: "name" })}
-      ${labeledInput("customer_email", "Customer email", lead.customerEmail || "", "email", "", { autocomplete: "email", inputmode: "email" })}
-      ${labeledInput("customer_phone", "Customer phone", lead.customerPhone || "", "tel", "", { autocomplete: "tel", inputmode: "tel" })}
+      ${labeledInput("customer_name", "Customer name", lead.customerName || "")}
+      ${labeledInput("customer_email", "Customer email", lead.customerEmail || "", "email")}
+      ${labeledInput("customer_phone", "Customer phone", lead.customerPhone || "")}
       ${labeledInput("customer_postcode", "Postcode", lead.customerPostcode || "")}
       ${labeledInput("invoice_date", "Invoice date", new Date().toISOString().slice(0, 10), "date")}
       ${labeledInput("supply_date", "Supply date / tax point", new Date().toISOString().slice(0, 10), "date")}
@@ -2240,6 +2237,47 @@ function permanenceChecks(config, store) {
   ];
 }
 
+function jobsPage(leads, params, state = {}) {
+  const all = (state.leads || leads || []).map((lead) => ensureJobFields(lead));
+  const showClosed = params.get("quick") === "closed";
+  const activeJobs = (leads || [])
+    .map((lead) => ensureJobFields(lead))
+    .filter((lead) => showClosed ? ["Archived", "Duplicate", "Lost", "Closed"].includes(lead.status) || lead.closed_at : !["Archived", "Duplicate", "Lost", "Closed"].includes(lead.status) && !lead.closed_at);
+  const finance = financeSummary(all, ensureFinanceState(state));
+  const supplierBlockers = activeJobs.filter((lead) => lead.supplier_order_required === "yes" && (lead.deposit_received_at || lead.supplier_order_placed_at) && !lead.supplier_confirmation_received_at);
+  const readyToInstall = activeJobs.filter((lead) => lead.supplier_actual_delivery_date && !lead.installation_completed_at);
+  const paymentDue = activeJobs.filter((lead) => lead.installation_completed_at && jobFinancials(lead, ensureFinanceState(state)).customerOutstanding > 0);
+  const quickFilters = [
+    ["Needs action", ""],
+    ["Quotes", "quotes"],
+    ["Deposits", "deposits"],
+    ["Supplier order", "supplier-orders"],
+    ["Awaiting delivery", "awaiting-delivery"],
+    ["Ready to install", "installations"],
+    ["Payment due", "payments"],
+    ["At risk", "overdue"],
+    ["Closed", "closed"]
+  ];
+  return pageShell(
+    "Jobs",
+    `<section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Active jobs", value: String(activeJobs.length), href: "/jobs" })}
+      ${aySummaryCard({ label: "Supplier blockers", value: String(supplierBlockers.length), href: "/jobs?quick=supplier-orders" })}
+      ${aySummaryCard({ label: "Ready to install", value: String(readyToInstall.length), href: "/jobs?quick=installations" })}
+      ${aySummaryCard({ label: "Money to collect", value: formatMoney(finance.customerOutstanding), href: "/money" })}
+      ${aySummaryCard({ label: "Payment due", value: String(paymentDue.length), href: "/jobs?quick=payments" })}
+    </div></section>
+    <form method="get" class="filters filter-panel">
+      <input name="search" placeholder="Search customer, postcode, phone, supplier ref" value="${escapeAttr(params.get("search") || "")}">
+      <button>Search jobs</button>
+      <a class="button secondary" href="/jobs">Clear</a>
+    </form>
+    ${ayFilterTabs(quickFilters.map(([label, value]) => ({ label, href: `/jobs${value ? `?quick=${value}` : ""}`, active: (params.get("quick") || "") === value })), "Job filters")}
+    <section class="panel"><div class="panel-heading"><h2>Jobs queue</h2><a class="button secondary compact-button" href="/leads">Lead inbox</a></div>${leadScanCards(activeJobs, state)}</section>
+    <details class="drawer"><summary>Advanced table and bulk controls</summary><div class="drawer-body"><form method="post" action="/leads/bulk">${bulkToolbar()}${leadTable(activeJobs, { selectable: true, state })}</form></div></details>`
+  );
+}
+
 function leadsPage(leads, params, state = {}) {
   const quickFilters = [
     ["New enquiries", "new"],
@@ -2258,24 +2296,23 @@ function leadsPage(leads, params, state = {}) {
   const openCount = (state.leads || leads || []).filter((lead) => !["Archived", "Duplicate", "Lost", "Closed"].includes(lead.status) && !lead.closed_at).length;
   return pageShell(
     "Leads",
-    `<section class="page-intro"><div><h2>Lead command centre</h2><p>Scan what needs action, open the job, and keep bulk correction tools tucked away.</p></div><div class="actions">${buttonForm("/sync/email", "Sync inbox")}<a class="button" href="/manual-lead">Add lead</a><a class="button secondary" href="/installations">Installations</a></div></section>
-    <section class="overview mini-overview">
-      ${metricCard("Open active leads", openCount, "/leads", openCount ? "green" : "grey")}
-      ${metricCard("Customer outstanding", finance.customerOutstanding, "/finance", finance.customerOutstanding ? "amber" : "green", true)}
-      ${metricCard("Balance due after installs", finance.balanceDueAfterCompletedInstalls, "/finance", finance.balanceDueAfterCompletedInstalls ? "amber" : "green", true)}
-      ${metricCard("Urgent leads", (state.leads || leads || []).filter((lead) => lead.operational_risk_level === "red").length, "/leads?quick=overdue", "red")}
-    </section>
+    `<section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Open active leads", value: String(openCount), href: "/leads" })}
+      ${aySummaryCard({ label: "Customer outstanding", value: formatMoney(finance.customerOutstanding), href: "/finance" })}
+      ${aySummaryCard({ label: "Balance due after installs", value: formatMoney(finance.balanceDueAfterCompletedInstalls), href: "/finance" })}
+      ${aySummaryCard({ label: "Urgent leads", value: String((state.leads || leads || []).filter((lead) => lead.operational_risk_level === "red").length), href: "/leads?quick=overdue" })}
+    </div></section>
     <form method="get" class="filters filter-panel">
       <input name="search" placeholder="Search name, phone, postcode, job" value="${escapeAttr(params.get("search") || "")}">
       <input name="status" placeholder="Status" value="${escapeAttr(params.get("status") || "")}">
       <button>Filter</button>
       <a class="button" href="/leads">Clear</a>
     </form>
-    <nav class="quick-filters">${quickFilters.map(([label, value]) => `<a class="${params.get("quick") === value ? "active" : ""}" href="/leads?quick=${value}">${escapeHtml(label)}</a>`).join("")}</nav>
+    ${ayFilterTabs(quickFilters.map(([label, value]) => ({ label, href: `/leads?quick=${value}`, active: params.get("quick") === value })), "Lead filters")}
     <section class="panel"><h2>Lead queue</h2>${leadScanCards(leads, state)}</section>
     <details class="drawer"><summary>Bulk actions and table view</summary><div class="drawer-body"><form method="post" action="/leads/bulk">
       ${bulkToolbar()}
-      <div class="table-scroll">${leadTable(leads, { selectable: true, state })}</div>
+      ${leadTable(leads, { selectable: true, state })}
     </form></div></details>`
   );
 }
@@ -2290,29 +2327,43 @@ function installationsPage(leads, state = {}) {
   const completedPaid = prepared.filter((lead) => lead.installation_completed_at && jobFinancials(lead, ensureFinanceState(state)).customer_amount_outstanding <= 0);
   return pageShell(
     "Installations",
-    `<section class="page-intro"><div><h2>Installation schedule</h2><p>Book, confirm, complete and collect balances from one focused view.</p></div><a class="button" href="/leads?quick=installations">View installation leads</a></section>
-    <section class="overview mini-overview">
-      ${metricCard("Today", today.length, "/installations", today.length ? "green" : "grey")}
-      ${metricCard("This week", thisWeek.length, "/installations", thisWeek.length ? "green" : "grey")}
-      ${metricCard("Needs booking", bookingNeeded.length, "/installations", bookingNeeded.length ? "amber" : "green")}
-      ${metricCard("Awaiting confirmation", awaitingConfirmation.length, "/installations", awaitingConfirmation.length ? "amber" : "green")}
-      ${metricCard("Payment due", completedBalanceDue.length, "/installations", completedBalanceDue.length ? "red" : "green")}
+    `<section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Today", value: String(today.length), href: "/installations" })}
+      ${aySummaryCard({ label: "This week", value: String(thisWeek.length), href: "/installations" })}
+      ${aySummaryCard({ label: "Needs booking", value: String(bookingNeeded.length), href: "/installations" })}
+      ${aySummaryCard({ label: "Awaiting confirmation", value: String(awaitingConfirmation.length), href: "/installations" })}
+      ${aySummaryCard({ label: "Payment due", value: String(completedBalanceDue.length), href: "/installations" })}
+    </div></section>
+    <section class="split">
+      <article><h2>Today</h2>${installationCards(today, state, "No installations booked today.")}</article>
+      <article><h2>This week</h2>${installationCards(thisWeek, state, "No installations booked this week.")}</article>
     </section>
-    <section class="panel"><h2>Today</h2>${installationCards(today, state, "No installations booked today.")}</section>
-    <details class="drawer panel"><summary>This week <span class="badge grey">${thisWeek.length}</span></summary><div class="drawer-body">${installationCards(thisWeek, state, "No installations booked this week.")}</div></details>
-    <details class="drawer panel"><summary>Needs booking <span class="badge grey">${bookingNeeded.length}</span></summary><div class="drawer-body">${installationCards(bookingNeeded, state, "No jobs are waiting to be booked.")}</div></details>
-    <details class="drawer panel"><summary>Awaiting confirmation <span class="badge grey">${awaitingConfirmation.length}</span></summary><div class="drawer-body">${installationCards(awaitingConfirmation, state, "No bookings need confirmation.")}</div></details>
-    <details class="drawer panel"><summary>Completed - balance due <span class="badge grey">${completedBalanceDue.length}</span></summary><div class="drawer-body">${installationCards(completedBalanceDue, state, "No completed jobs have a customer balance due.")}</div></details>
-    <details class="drawer panel"><summary>Completed - paid <span class="badge grey">${completedPaid.length}</span></summary><div class="drawer-body">${installationCards(completedPaid.slice(0, 12), state, "No completed paid installations yet.")}</div></details>
+    <section class="split">
+      <article><h2>Needs booking</h2>${installationCards(bookingNeeded, state, "No jobs are waiting to be booked.")}</article>
+      <article><h2>Awaiting confirmation</h2>${installationCards(awaitingConfirmation, state, "No bookings need confirmation.")}</article>
+    </section>
+    <section class="split">
+      <article><h2>Completed / payment due</h2>${installationCards(completedBalanceDue, state, "No completed jobs have a customer balance due.")}</article>
+      <article><h2>Completed and paid</h2>${installationCards(completedPaid.slice(0, 12), state, "No completed paid installations yet.")}</article>
+    </section>
     `
   );
 }
 
 function installationCards(leads, state, emptyText) {
-  if (!leads.length) return `<p class="empty-state">${escapeHtml(emptyText)}</p>`;
-  return `<div class="card-grid">${leads.map((lead) => {
+  if (!leads.length) return ayEmptyState({ title: "Nothing here", body: emptyText });
+  return `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${leads.map((lead) => {
     const finance = jobFinancials(lead, ensureFinanceState(state));
-    return `<a class="install-card" href="/leads/${encodeURIComponent(lead.id)}"><h3>${escapeHtml(lead.customerName || lead.customerPostcode || lead.id)}</h3><p>${escapeHtml([lead.customerPostcode, workflowLabel(lead.workflow_type)].filter(Boolean).join(" / "))}</p><p><strong>${escapeHtml(stageLabel(lead))}</strong></p><p class="muted">${escapeHtml([lead.installation_scheduled_at, lead.installation_time_window, lead.installation_assigned_to].filter(Boolean).join(" / ") || "No booking set")}</p><p>${escapeHtml(lead.installation_access_notes || "")}</p><p>${badge(finance.customerPaymentStatus)} ${finance.customerOutstanding ? escapeHtml(formatMoney(finance.customerOutstanding)) : ""}</p></a>`;
+    const schedule = [lead.installation_scheduled_at, lead.installation_time_window, lead.installation_assigned_to].filter(Boolean).join(" · ") || "No booking set";
+    return ayJobCard({
+      customerName: lead.customerName || lead.customerPostcode || lead.id,
+      metaParts: [lead.customerPostcode, workflowLabel(lead.workflow_type), schedule],
+      status: lead.status,
+      isAtRisk: (lead.operational_risk_level || "green") === "red",
+      value: finance.customerOutstanding ? formatMoney(finance.customerOutstanding) : "",
+      primaryLabel: "Open job",
+      primaryHref: `/leads/${encodeURIComponent(lead.id)}`
+    });
   }).join("")}</div>`;
 }
 
@@ -2372,61 +2423,39 @@ function leadDetailPage(lead, config, state = {}) {
   const primaryActions = workflow ? workflow.visiblePrimaryActions.slice(0, 1) : [];
   const secondaryActions = workflow ? [...workflow.visiblePrimaryActions.slice(1), ...workflow.visibleSecondaryActions] : [];
   if (lead && finance && !lead.balance_amount) lead.calculated_balance_due = String(finance.customer_amount_outstanding || "");
-  const riskClass = workflow ? workflow.riskLevel || lead.operational_risk_level || "green" : "green";
-  const leadMeta = lead ? [lead.customerPhone, lead.customerPostcode, lead.customerTownArea].filter(Boolean).map(escapeHtml).join(" &middot; ") : "";
-  const shareText = lead ? [lead.customerPhone, lead.customerPostcode, stageLabel(lead)].filter(Boolean).map(escapeAttr).join(" &#183; ") : "";
-  const shareButton = lead
-    ? `<button type="button" class="contact-btn share-btn" data-title="${escapeAttr(lead.customerName || "Unknown")} &mdash; ADY Lead" data-text="${shareText}" data-url="">&#8599; Share</button>`
-    : "";
-  const contactLinks = lead
-    ? [
-        lead.customerPhone ? `<a href="tel:${escapeAttr(String(lead.customerPhone).replace(/[^+0-9]/g, ""))}" class="contact-btn">&#128222; Call</a>` : "",
-        lead.customerEmail ? `<a href="mailto:${escapeAttr(lead.customerEmail)}" class="contact-btn">&#9993; Email</a>` : "",
-        lead.dashboardUrl ? `<a href="${escapeAttr(lead.dashboardUrl)}" class="contact-btn" target="_blank" rel="noreferrer">Checkatrade</a>` : "",
-        shareButton
-      ].filter(Boolean).join("")
-    : "";
   return pageShell(
     lead ? `Lead ${lead.id}` : "Lead not found",
     !lead
       ? `<p>Lead not found.</p>`
-      : `<section class="lead-header-strip rag-${escapeAttr(riskClass)}">
-          <div class="lhs-main">
-            <h2 class="lhs-name">${escapeHtml(lead.customerName || "Unknown")}</h2>
-            <div class="lhs-meta">${leadMeta || "No contact or location recorded"}</div>
+      : `${ayBackLink("/jobs", "Back to jobs")}
+        <section class="ay-section" style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--ay-space-4);flex-wrap:wrap">
+          <div>
+            <h2 class="ay-page-title">${escapeHtml(lead.customerName || "Unknown")}</h2>
+            <p class="ay-page-subtitle">${escapeHtml([workflowLabel(lead.workflow_type), lead.customerPostcode, lead.customerTownArea].filter(Boolean).join(" · ") || "No location recorded")}</p>
           </div>
-          <div class="lhs-badges">
-            ${ragBadge(workflow.riskLevel)}
-            ${workflowBadge(lead.workflow_type)}
-            <span class="badge grey">${escapeHtml(stageLabel(lead))}</span>
+          <div style="display:flex;gap:var(--ay-space-2);align-items:center;flex-wrap:wrap">
+            ${ayStageBadge(lead.status)}
+            ${lead.operational_risk_level === "red" ? ayBadge({ variant: "red", label: "At risk" }) : ""}
           </div>
         </section>
-        <section class="panel primary-action-panel">
-          <span class="eyebrow">Next best action</span>
-          <h2>${escapeHtml(workflow.nextBestAction)}</h2>
-          <p class="muted">${escapeHtml(workflow.reason)}</p>
-          ${actionForms(lead, primaryActions)}
-          ${secondaryActions.length ? `<details class="advanced-panel"><summary>Other actions</summary>${actionForms(lead, secondaryActions)}</details>` : ""}
+        <section class="ay-section" style="display:flex;gap:var(--ay-space-2);flex-wrap:wrap">
+          ${lead.customerPhone ? ayButton({ label: `Call ${lead.customerName || "customer"}`, href: `tel:${lead.customerPhone.replace(/\s/g, "")}`, variant: "secondary", size: "sm" }) : ayBadge({ variant: "gray", label: "No phone" })}
+          ${lead.customerEmail ? ayButton({ label: "Email", href: `mailto:${lead.customerEmail}`, variant: "secondary", size: "sm" }) : ayBadge({ variant: "gray", label: "No email" })}
+          ${lead.customerPostcode ? ayButton({ label: "Check address", href: addressCheckUrl(lead), variant: "ghost", size: "sm", attrs: 'target="_blank" rel="noreferrer"' }) : ""}
         </section>
-        ${contactLinks ? `<section class="contact-strip">${contactLinks}</section>` : ""}
-        ${financialWarningsPanel(warnings)}
-        <details class="panel drawer" open>
-          <summary>Money</summary>
-          <div class="drawer-body">${jobSnapshotCards(lead, finance, state)}</div>
-        </details>
-        <details class="panel drawer">
-          <summary>${escapeHtml(customerDraft.label || "Current draft")}</summary>
-          <div class="drawer-body">
-            <textarea id="customer-update">${escapeHtml(customerDraft.body || lead.draftReply || "")}</textarea>
-            <button onclick="navigator.clipboard.writeText(document.getElementById('customer-update').value)">Copy message</button>
-          </div>
-        </details>
-        <details class="panel drawer">
-          <summary>Timeline</summary>
-          <div class="drawer-body">${workflowRail(lead)}${eventList(lead, config)}</div>
-        </details>
         ${customerDetailsPanel(lead)}
-        <details class="panel advanced-panel">
+        <section class="ay-next-action">
+          <p class="ay-next-action__eyebrow">Next best action</p>
+          <h2 class="ay-next-action__title">${escapeHtml(workflow.nextBestAction)}</h2>
+          <p class="ay-action-card__meta" style="margin-bottom:var(--ay-space-4)">${escapeHtml(workflow.reason)}</p>
+          ${actionForms(lead, primaryActions)}
+          ${secondaryActions.length ? `<details class="advanced-panel" style="margin-top:var(--ay-space-3)"><summary>Other safe actions</summary>${actionForms(lead, secondaryActions)}</details>` : ""}
+        </section>
+        ${financialWarningsPanel(warnings)}
+        ${jobSnapshotCards(lead, finance, state)}
+        <section class="panel"><h2>Timeline</h2>${workflowRail(lead)}${eventList(lead, config)}</section>
+        <section class="panel"><h2>${escapeHtml(customerDraft.label || "Current draft")}</h2><textarea id="customer-update">${escapeHtml(customerDraft.body || lead.draftReply || "")}</textarea><button onclick="navigator.clipboard.writeText(document.getElementById('customer-update').value)">Copy message</button></section>
+        <details class="panel">
           <summary>Advanced: details, corrections and history</summary>
           <section class="lead-detail summary-grid">
             <div><strong>Full address</strong><br>${escapeHtml(lead.customerAddress || "Needed")}<br><a href="${escapeAttr(addressCheckUrl(lead))}" target="_blank" rel="noreferrer">Check Royal Mail</a></div>
@@ -2482,21 +2511,21 @@ function supplierEmailsPage(emails, leads, params = new URLSearchParams()) {
   return pageShell(
     "Supplier Email Review",
     `<section class="page-intro"><div><h2>Supplier email triage</h2><p>Separate supplier paperwork from customer leads, link useful messages to jobs, archive the noise.</p></div><form method="post" action="/sync/email"><button>Sync inbox</button></form></section>
-    <section class="overview mini-overview">
-      ${metricCard("Needs review", filtered.length, "/supplier-emails", filtered.length ? "amber" : "green")}
-      ${metricCard("Unlinked", unlinkedCount, "/supplier-emails?filter=unlinked", unlinkedCount ? "amber" : "green")}
-      ${metricCard("Linked", linkedCount, "/supplier-emails?filter=linked", "green")}
-      ${metricCard("Invoice-like", invoiceLikeCount, "/supplier-emails?search=invoice", invoiceLikeCount ? "amber" : "grey")}
-      ${metricCard("Delivery-like", deliveryLikeCount, "/supplier-emails?search=delivery", deliveryLikeCount ? "green" : "grey")}
-    </section>
-    <details class="drawer panel"><summary>Filter and search</summary><div class="drawer-body"><form method="get" class="filters filter-panel">
+    <section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Needs review", value: String(filtered.length), href: "/supplier-emails" })}
+      ${aySummaryCard({ label: "Unlinked", value: String(unlinkedCount), href: "/supplier-emails?filter=unlinked" })}
+      ${aySummaryCard({ label: "Linked", value: String(linkedCount), href: "/supplier-emails?filter=linked" })}
+      ${aySummaryCard({ label: "Invoice-like", value: String(invoiceLikeCount), href: "/supplier-emails?search=invoice" })}
+      ${aySummaryCard({ label: "Delivery-like", value: String(deliveryLikeCount), href: "/supplier-emails?search=delivery" })}
+    </div></section>
+    <form method="get" class="filters filter-panel">
       <input name="search" placeholder="Search supplier, order ref, subject, customer, postcode" value="${escapeAttr(params.get("search") || "")}">
       <input name="supplier" placeholder="Supplier" value="${escapeAttr(params.get("supplier") || "")}">
       <input name="date" type="date" value="${escapeAttr(params.get("date") || "")}">
       <button>Filter</button>
       <a class="button secondary" href="/supplier-emails">Clear</a>
-    </form></div></details>
-    <nav class="quick-filters">${filters.map(([label, value]) => `<a class="${current === value ? "active" : ""}" href="/supplier-emails?filter=${value}">${escapeHtml(label)}</a>`).join("")}</nav>
+    </form>
+    ${ayFilterTabs(filters.map(([label, value]) => ({ label, href: `/supplier-emails?filter=${value}`, active: current === value })), "Supplier email filters")}
     <section class="panel"><h2>Supplier email review items</h2>${supplierEmailCards(filtered, leads)}</section>`
   );
 }
@@ -2506,14 +2535,21 @@ function supplierEmailDetailPage(email, leads) {
   const linkedLead = (leads || []).find((lead) => lead.id === email.matchedLeadId);
   return pageShell(
     "Supplier Email",
-    `<section class="lead-detail summary-grid">
-      <div><strong>Supplier</strong><br>${escapeHtml(email.supplierName || "Unknown")}</div>
-      <div><strong>Sender</strong><br>${escapeHtml(email.supplierEmail || "")}</div>
-      <div><strong>Subject</strong><br>${escapeHtml(email.subject || "")}</div>
-      <div><strong>Status</strong><br>${badge(email.reviewStatus || "Needs review")}</div>
-      <div><strong>Order reference</strong><br>${escapeHtml(email.extractedOrderReference || "")}</div>
-      <div><strong>Matched job</strong><br>${linkedLead ? `<a href="/leads/${encodeURIComponent(linkedLead.id)}">${escapeHtml(linkedLead.customerName || linkedLead.customerPostcode || linkedLead.id)}</a>` : "Unlinked"}</div>
-    </section>
+    `${ayBackLink("/supplier-emails", "Back to supplier inbox")}
+    <div class="ay-detail-summary-grid">
+      <div class="ay-detail-card"><p class="ay-detail-card__title">Supplier</p>
+        <div class="ay-detail-card__row"><span class="ay-detail-card__row-label">Name</span><span class="ay-detail-card__row-value">${escapeHtml(email.supplierName || "Unknown")}</span></div>
+        <div class="ay-detail-card__row"><span class="ay-detail-card__row-label">Sender</span><span class="ay-detail-card__row-value">${escapeHtml(email.supplierEmail || "—")}</span></div>
+      </div>
+      <div class="ay-detail-card"><p class="ay-detail-card__title">Email</p>
+        <div class="ay-detail-card__row"><span class="ay-detail-card__row-label">Subject</span><span class="ay-detail-card__row-value">${escapeHtml(email.subject || "—")}</span></div>
+        <div class="ay-detail-card__row"><span class="ay-detail-card__row-label">Order ref</span><span class="ay-detail-card__row-value">${escapeHtml(email.extractedOrderReference || "—")}</span></div>
+      </div>
+      <div class="ay-detail-card"><p class="ay-detail-card__title">Review</p>
+        <div class="ay-detail-card__row"><span class="ay-detail-card__row-label">Status</span><span class="ay-detail-card__row-value">${ayBadge({ variant: email.matchedLeadId ? "green" : "amber", label: email.reviewStatus || "Needs review" })}</span></div>
+        <div class="ay-detail-card__row"><span class="ay-detail-card__row-label">Matched job</span><span class="ay-detail-card__row-value">${linkedLead ? `<a href="/leads/${encodeURIComponent(linkedLead.id)}" style="color:var(--ay-text-link)">${escapeHtml(linkedLead.customerName || linkedLead.customerPostcode || linkedLead.id)}</a>` : "Unlinked"}</span></div>
+      </div>
+    </div>
     <section class="split">
       <article><h2>Edit extracted data</h2>
         <form method="post" action="/supplier-emails/${encodeURIComponent(email.id)}/edit">
@@ -2524,8 +2560,8 @@ function supplierEmailDetailPage(email, leads) {
           <input name="extractedLeadTime" placeholder="Lead time" value="${escapeAttr(email.extractedLeadTime || "")}">
           <input name="extractedDeliveryDate" type="date" value="${escapeAttr(email.extractedDeliveryDate || "")}">
           ${selectInput("reviewStatus", ["Needs review", "Reviewed", "Linked", "Duplicate", "Irrelevant", "Archived"], email.reviewStatus || "Needs review")}
+          <textarea name="rawSummary" placeholder="Summary">${escapeHtml(email.rawSummary || "")}</textarea>
           <textarea name="notes" placeholder="Review notes">${escapeHtml(email.notes || "")}</textarea>
-          <details class="drawer panel"><summary>Raw email content</summary><div class="drawer-body"><textarea name="rawSummary" placeholder="Summary">${escapeHtml(email.rawSummary || "")}</textarea></div></details>
           <button>Save supplier email</button>
         </form>
       </article>
@@ -2552,17 +2588,17 @@ function manualLeadPage() {
     `<section class="page-intro"><div><h2>Add a lead</h2><p>Paste the enquiry. The app will extract the useful bits and take you straight to the job workflow.</p></div><a class="button secondary" href="/leads">Back to leads</a></section>
     <section class="panel form-panel">
       <form method="post" class="manual">
-        <label><span>Customer message</span><textarea name="message" rows="8" required placeholder="Paste the customer enquiry, Checkatrade message or phone note here..." autocorrect="on" autocapitalize="sentences"></textarea></label>
+        <label><span>Customer message</span><textarea name="message" required placeholder="Paste Checkatrade enquiry, phone note or customer message here"></textarea></label>
         <label><span>Source</span><input name="source" placeholder="Source" value="Manual lead"></label>
-        <button class="button">Create lead →</button>
+        <button>Create lead</button>
         <details class="advanced-panel">
-          <summary>Add customer details (optional)</summary>
+          <summary>Add optional customer details</summary>
           <div class="field-grid">
-            <label><span>Name</span><input name="customerName" placeholder="Customer name" autocomplete="name"></label>
-            <label><span>Phone</span><input name="customerPhone" placeholder="Phone" autocomplete="tel" inputmode="tel"></label>
-            <label><span>Email</span><input name="customerEmail" type="email" placeholder="Email" autocomplete="email" inputmode="email"></label>
-            <label><span>Postcode</span><input name="postcode" placeholder="Postcode" autocomplete="postal-code" inputmode="text" autocapitalize="characters"></label>
-            <label><span>Full address</span><input name="customerAddress" placeholder="Full address" autocomplete="street-address"></label>
+            <label><span>Name</span><input name="customerName" placeholder="Customer name"></label>
+            <label><span>Phone</span><input name="customerPhone" placeholder="Phone"></label>
+            <label><span>Email</span><input name="customerEmail" placeholder="Email"></label>
+            <label><span>Postcode</span><input name="postcode" placeholder="Postcode"></label>
+            <label><span>Full address</span><input name="customerAddress" placeholder="Full address"></label>
             <label><span>Location</span><input name="location" placeholder="Location"></label>
           </div>
           <label><span>Notes</span><textarea name="notes" placeholder="Internal notes"></textarea></label>
@@ -2573,33 +2609,89 @@ function manualLeadPage() {
 }
 
 function pageShell(title, body, status = 200) {
-  const navGroups = [
-    ["Work", [["Today", "/today"], ["Dashboard", "/dashboard"], ["Leads", "/leads"], ["Add Lead", "/manual-lead"], ["Installations", "/installations"], ["Technician Schedule", "/technician-schedule"]]],
-    ["Money", [["Finance", "/finance"], ["Customer Invoices", "/invoices"], ["Supplier Invoices", "/supplier-invoices"]]],
-    ["Inbox", [["Supplier Emails", "/supplier-emails"], ["Email Sync", "/supplier-emails"]]],
-    ["Admin", [["System", "/system"], ["Settings", "/settings"], ["Setup", "/setup"], ["Exports", "/exports"], ["Demo", "/demo"]]]
-  ];
-  const nav = navGroups.map(([group, links]) => `<section class="nav-group"><span>${escapeHtml(group)}</span>${links.map(([label, href]) => `<a href="${escapeAttr(href)}">${escapeHtml(label)}</a>`).join("")}</section>`).join("");
   const meta = pageMeta(title);
-  const mobileBottomNav = `<nav class="mobile-bottom-nav">
-    <a href="/today" class="bnav-item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Today</span></a>
-    <a href="/leads" class="bnav-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg><span>Leads</span></a>
-    <a href="/manual-lead" class="bnav-item bnav-add"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v8" stroke="#062a26"></path><path d="M8 12h8" stroke="#062a26"></path></svg><span>Add</span></a>
-    <a href="/finance" class="bnav-item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><text x="12" y="16" text-anchor="middle" font-size="12" font-weight="800" fill="currentColor" stroke="none">&pound;</text></svg><span>Finance</span></a>
-    <button id="nav-menu-btn" type="button" class="bnav-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M4 12h16"></path><path d="M4 17h16"></path></svg><span>Menu</span></button>
-  </nav>`;
-  const iosInstallBanner = `<div class="ios-install-banner" id="ios-install-banner" hidden>
-    <div class="iib-content">
-      <div class="iib-icon">ADY</div>
-      <div class="iib-text">
-        <strong>Install Autodoors Yorkshire</strong>
-        <small>Tap Share then "Add to Home Screen"</small>
-      </div>
-      <button class="iib-dismiss" onclick="dismissIosInstall()" aria-label="Dismiss">&times;</button>
-    </div>
-    <div class="iib-arrow">&#9662;</div>
-  </div>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${escapeHtml(title)}</title><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#14b8a6"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ADY"><link rel="apple-touch-icon" href="/icon-192.svg"><script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));}</script><style>${appStyles()}</style></head><body><a href="#main-content" class="skip-link">Skip to content</a><div class="app-shell"><aside class="sidebar" id="nav-menu"><button type="button" id="nav-close-btn" class="nav-close-btn" aria-label="Close menu">&#10005;</button><div class="brand-mark"><strong>ADY</strong><span>Autodoors Yorkshire</span></div><nav class="side-nav">${nav}</nav><div class="sidebar-foot"><span>info@autodoorsyorkshire.com</span><strong>07895 698 239</strong><form method="post" action="/logout" class="logout-form"><button class="logout-btn" type="submit">Sign out</button></form></div></aside><div class="nav-overlay" id="nav-overlay"></div><div class="workspace"><header class="page-top"><div><p class="app-kicker">${escapeHtml(meta.kicker)}</p><h1>${escapeHtml(title)}</h1><p class="page-subtitle">${escapeHtml(meta.subtitle)}</p></div><form method="get" action="/leads" class="global-search"><input name="search" placeholder="Search customer, phone or postcode"></form><div class="top-actions"><a class="button" href="${escapeAttr(meta.primaryHref)}">${escapeHtml(meta.primaryLabel)}</a><form method="post" action="/sync/email"><button class="button secondary">Sync inbox</button></form></div></header><main id="main-content">${body}</main>${mobileBottomNav}${iosInstallBanner}</div></div><script>${appScript()}</script></body></html>`;
+
+  // Resolve the active nav item from the page title (pageShell has no path).
+  const titleToHref = {
+    "Today": "/today", "Jobs": "/jobs", "Leads": "/leads", "Money": "/money",
+    "Finance": "/finance", "Settings": "/settings", "System": "/system",
+    "Installations": "/installations", "Supplier Email Review": "/supplier-emails",
+    "Exports": "/exports", "Dashboard": "/dashboard", "Invoices": "/invoices",
+    "Supplier Invoices": "/supplier-invoices", "Technician Schedule": "/technician-schedule",
+    "Setup": "/setup", "Demo": "/demo", "Add Manual Lead": "/manual-lead"
+  };
+  const activeHref = titleToHref[title] || "";
+
+  const primaryNav = [
+    ["Today", "/today", "today"],
+    ["Leads", "/leads", "leads"],
+    ["Jobs", "/jobs", "jobs"],
+    ["Supplier inbox", "/supplier-emails", "supplier"],
+    ["Installations", "/installations", "installations"],
+    ["Money", "/money", "money"],
+    ["Finance", "/finance", "finance"]
+  ];
+  const adminNav = [
+    ["Settings", "/settings", "settings"],
+    ["System", "/system", "system"],
+    ["Exports", "/exports", "exports"]
+  ];
+  const moreNav = [
+    ["Dashboard", "/dashboard", "finance"],
+    ["Add lead", "/manual-lead", "leads"],
+    ["Customer invoices", "/invoices", "money"],
+    ["Supplier invoices", "/supplier-invoices", "supplier"],
+    ["Technician schedule", "/technician-schedule", "installations"],
+    ["Setup", "/setup", "settings"],
+    ["Demo", "/demo", "system"]
+  ];
+
+  const navItem = ([label, href, icon]) => {
+    const active = href === activeHref;
+    return `<a class="ay-nav-item${active ? " ay-nav-item--active" : ""}" href="${escapeAttr(href)}"${active ? ' aria-current="page"' : ""}>`
+      + `<span class="ay-nav-item__icon">${ayIcon(icon)}</span><span class="ay-nav-item__label">${escapeHtml(label)}</span></a>`;
+  };
+  const navGroup = (label, items) => `<div class="ay-nav-group"><p class="ay-nav-group-label">${escapeHtml(label)}</p>${items.map(navItem).join("")}</div>`;
+  const sidebarNav = navGroup("Workspace", primaryNav) + navGroup("Admin", adminNav) + navGroup("More", moreNav);
+  const signOut = `<form method="post" action="/logout">${ayButton({ label: "Sign out", variant: "secondary", size: "sm", type: "submit", fullWidth: true })}</form>`;
+
+  const bottomNav = [
+    ["Today", "/today", "today"],
+    ["Jobs", "/jobs", "jobs"],
+    ["Money", "/money", "money"],
+    ["Installs", "/installations", "installations"]
+  ];
+  const bottomItem = ([label, href, icon]) => {
+    const active = href === activeHref;
+    return `<a class="ay-bottom-nav__item${active ? " ay-bottom-nav__item--active" : ""}" href="${escapeAttr(href)}"${active ? ' aria-current="page"' : ""}>`
+      + `<span class="ay-bottom-nav__item__icon">${ayIcon(icon, 24)}</span><span>${escapeHtml(label)}</span></a>`;
+  };
+  const moreSheetLinks = [...primaryNav, ...adminNav, ...moreNav].map(navItem).join("");
+
+  const header = `<header class="ay-page-header">`
+    + `<div><p class="ay-section-label" style="margin:0 0 4px">${escapeHtml(meta.kicker)}</p>`
+    + `<h1 class="ay-page-title">${escapeHtml(title)}</h1>`
+    + `<p class="ay-page-subtitle">${escapeHtml(meta.subtitle)}</p></div>`
+    + `<div class="ay-page-header__actions">`
+    + `<form method="get" action="/jobs" role="search" class="ay-page-header__search"><input class="ay-input" name="search" placeholder="Search customer, phone, postcode or job" aria-label="Search" style="min-width:200px"></form>`
+    + ayButton({ label: meta.primaryLabel, href: meta.primaryHref, variant: "primary", size: "sm" })
+    + `<form method="post" action="/sync/email">${ayButton({ label: "Sync inbox", variant: "secondary", size: "sm", type: "submit" })}</form>`
+    + `</div></header>`;
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#15426B"><title>${escapeHtml(title)}</title><style>${appStyles()}</style></head><body>`
+    + `<a class="ay-sr-only" href="#main-content">Skip to main content</a>`
+    + `<div class="ay-shell">`
+    + `<aside class="ay-sidebar">`
+    + `<div class="ay-sidebar__logo">Autodoors Yorkshire<span class="ay-sidebar__logo-sub">Trade dashboard</span></div>`
+    + `<nav class="ay-sidebar__nav" aria-label="Primary">${sidebarNav}</nav>`
+    + `<div class="ay-sidebar__foot"><div>info@autodoorsyorkshire.com</div><strong>07895 698 239</strong>${signOut}</div>`
+    + `</aside>`
+    + `<div class="ay-main-content">${header}<main id="main-content">${body}</main></div>`
+    + `</div>`
+    + `<nav class="ay-bottom-nav" aria-label="Primary mobile"><div class="ay-bottom-nav__items">${bottomNav.map(bottomItem).join("")}<a class="ay-bottom-nav__item" href="#ay-more"><span class="ay-bottom-nav__item__icon">${ayIcon("more", 24)}</span><span>More</span></a></div></nav>`
+    + `<div id="ay-more" class="ay-more-sheet"><a class="ay-more-sheet__backdrop" href="#" aria-label="Close menu"></a><div class="ay-more-sheet__panel"><div class="ay-sheet__handle"></div><p class="ay-section-label" style="padding:0 var(--ay-space-3)">Menu</p><nav aria-label="All sections">${moreSheetLinks}</nav><div style="padding:var(--ay-space-3)">${signOut}</div></div></div>`
+    + `<div class="ay-toast-region" aria-live="polite" aria-atomic="false"></div>`
+    + `<script>${appScript()}</script></body></html>`;
 }
 
 function pageMeta(title) {
@@ -2607,7 +2699,9 @@ function pageMeta(title) {
   return {
     Dashboard: { kicker: "Management overview", subtitle: "Pipeline, money and recent activity at a glance.", primaryLabel: "Open Today", primaryHref: "/today" },
     Today: { kicker: "Command centre", subtitle: "The work, money and risk items to handle first.", primaryLabel: "Add lead", primaryHref: "/manual-lead" },
+    Jobs: { kicker: "Active work", subtitle: "Live jobs from quote through supplier, install, payment and close.", primaryLabel: "Add job", primaryHref: "/manual-lead" },
     Leads: { kicker: "Work queue", subtitle: "Find the customer, see the stage, open the next action.", primaryLabel: "Add lead", primaryHref: "/manual-lead" },
+    Money: { kicker: "Owner money view", subtitle: "Money to collect, supplier bills and payment requests.", primaryLabel: "Record payment", primaryHref: "/money#customer-balances" },
     "Add Manual Lead": { kicker: "New enquiry", subtitle: "Paste the message and let the dashboard create the job.", primaryLabel: "View leads", primaryHref: "/leads" },
     Finance: { kicker: "Money control", subtitle: "Customer balances, supplier bills and job margin estimates.", primaryLabel: "Record payment", primaryHref: "/finance#payments" },
     Invoices: { kicker: "Customer invoices", subtitle: "Draft, issue, PDF and track invoices without auto-sending.", primaryLabel: "New invoice", primaryHref: "/invoices/new" },
@@ -2625,87 +2719,242 @@ function pageMeta(title) {
 
 function appStyles() {
   return `
-.settings-groups{display:grid;gap:14px}.settings-group{background:#fff;border:1px solid var(--border,#dde3ea);border-radius:8px;padding:14px}.settings-group h3{margin:0 0 12px}.settings-group-details{background:#fff;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:10px}.settings-group-details>summary{padding:14px;cursor:pointer;font-weight:800;list-style:none}.settings-group-details>summary::-webkit-details-marker{display:none}.settings-group-details>summary::after{content:"▸";float:right;color:var(--muted)}.settings-group-details[open]>summary::after{content:"▾"}.settings-group-body{padding:0 14px 14px}
+${AY_DESIGN_SYSTEM_CSS}
+.settings-groups{display:grid;gap:14px}.settings-group{background:#fff;border:1px solid var(--border,#dde3ea);border-radius:8px;padding:14px}.settings-group h3{margin:0 0 12px}
 .today-command-list,.warning-stack,.setup-steps{display:grid;gap:10px}.today-command-card,.warning-card,.setup-step{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:#fff;border:1px solid var(--border,#dde3ea);border-left:4px solid var(--neutral,#667085);border-radius:8px;padding:13px;text-decoration:none;color:var(--text,#101828)}.today-command-card h3,.warning-card h3,.setup-step strong{margin:0}.today-command-card p,.warning-card p,.setup-step small{margin:4px 0;color:var(--muted,#667085)}.today-command-card.red,.warning-card.red,.setup-step.red{border-left-color:var(--danger,#d92d20)}.today-command-card.amber,.warning-card.amber,.setup-step.amber{border-left-color:var(--warning,#d97706)}.today-command-card.green,.warning-card.green,.setup-step.green{border-left-color:var(--success,#15945b)}.setup-step span{font-size:12px;font-weight:900;text-transform:uppercase;color:var(--muted,#667085)}.demo-banner{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#ecfeff;border-color:#99f6e4}.demo-banner strong{color:#0f766e}.demo-banner span{color:#475467}@media(max-width:760px){.today-command-card,.warning-card,.setup-step{grid-template-columns:1fr}.today-command-card .button,.warning-card .button{width:100%}}
-*{box-sizing:border-box}body{font-family:Inter,Arial,sans-serif;margin:0;background:#f6f7f9;color:#17202a;line-height:1.45}.skip-link{position:absolute;top:-40px;left:0;background:#14b8a6;color:#fff;padding:8px 12px;border-radius:0 0 8px 0;font-weight:700;z-index:999;text-decoration:none}.skip-link:focus{top:0}header{background:#111827;color:#fff;border-bottom:1px solid #273244}header .wrap,main{max-width:1240px;margin:0 auto;padding:18px}.topbar{display:flex;gap:18px;align-items:center;justify-content:space-between}.app-kicker{margin:0 0 4px;color:#9ca3af;font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.08em}h1{margin:0;font-size:24px;letter-spacing:0}h2{font-size:17px;margin:0 0 12px}h3{font-size:14px;margin:0 0 8px}a{color:#0f5f8f}nav{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}nav a{display:inline-flex;align-items:center;min-height:36px;padding:8px 10px;border-radius:7px;color:#dbe4ef;text-decoration:none;font-weight:700;font-size:13px}nav a:hover,.quick-filters .active{background:#263244;color:#fff}.button,button{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 13px;border:1px solid #17202a;background:#17202a;border-radius:7px;color:#fff;text-decoration:none;cursor:pointer;font-weight:800;font-size:13px}.button:hover,button:hover{background:#0b1117}.button.secondary{background:#fff;color:#17202a}.button.secondary:hover{background:#edf1f5}.compact-button{min-height:32px;padding:7px 10px;font-size:12px}.danger-button{background:#991b1b;border-color:#991b1b}.danger-button:hover{background:#7f1d1d}.actions{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}.brand-strip{display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:12px 14px;margin:0 0 14px}.brand-strip strong{color:#111827}.brand-strip span{color:#5d6977}.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:14px 0}.overview-tile{background:#fff;color:#17202a;border:1px solid #dde3ea;border-left:5px solid #52616f;border-radius:8px;padding:14px;text-decoration:none}.overview-tile strong{display:block;font-size:29px}.overview-tile span{display:block;font-size:12px;color:#5d6977;font-weight:800}.overview-tile.red,.metric-card.red,.action-card.red,.job-mini-card.red{border-left-color:#dc2626}.overview-tile.amber,.metric-card.amber,.action-card.amber,.job-mini-card.amber{border-left-color:#f59e0b}.overview-tile.green,.metric-card.green,.action-card.green,.job-mini-card.green{border-left-color:#16a34a}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.compact-queues{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));margin-top:10px}.metric-card,.metrics div,article,.panel{background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:14px;text-decoration:none;color:#17202a}.active-card{border-left:5px solid #f59e0b}.quiet-card{opacity:.7}.metric-card:hover,.overview-tile:hover,.job-mini-card:hover{border-color:#9aa7b5;box-shadow:0 8px 22px rgba(17,24,39,.08)}.metrics strong{display:block;font-size:27px;color:#111827}.metrics span{font-size:13px;color:#52616f}.status-card{border-left:5px solid #eceff3}.status-card.green{border-left-color:#16a34a}.status-card.amber{border-left-color:#f59e0b}.status-card.red{border-left-color:#dc2626}.status-card small{display:block;color:#66727f;margin-top:5px}.ops-snapshot{margin:14px 0}details{margin-top:12px}summary{cursor:pointer;color:#263746;font-weight:800}.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:14px 0}.today ul,.timeline{padding-left:18px;margin:0}.today li{margin:8px 0}.focus-list{display:grid;gap:8px}.focus-row{display:grid;grid-template-columns:92px 1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid #e5e9ee;border-radius:8px;text-decoration:none;color:#17202a;background:#fff}.focus-main strong,.focus-main span{display:block}.focus-main span{font-size:13px;color:#647184}.action-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.action-card{border-left:5px solid #d8e0e7}.action-card h3{margin-top:8px}.action-card p{margin:7px 0}.pipeline-board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.pipeline-column{background:#f9fafb;border:1px solid #dde3ea;border-radius:8px;padding:10px}.pipeline-column h3{display:flex;justify-content:space-between;align-items:center}.pipeline-column h3 span{background:#e9eef5;border-radius:999px;padding:2px 7px;font-size:12px}.job-mini-card{display:block;background:#fff;border:1px solid #dde3ea;border-left:5px solid #16a34a;border-radius:8px;padding:10px;margin:8px 0;text-decoration:none;color:#17202a}.job-mini-card strong,.job-mini-card span,.job-mini-card small{display:block}.job-mini-card span{font-size:13px;color:#52616f}.job-mini-card small{margin-top:4px;color:#66727f}table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid #dde3ea;border-radius:8px;overflow:hidden}th,td{border-bottom:1px solid #e6ebf0;padding:10px;text-align:left;vertical-align:top;font-size:14px}th{background:#f0f3f6;color:#263746;font-size:12px;text-transform:uppercase;letter-spacing:.04em}tr:last-child td{border-bottom:0}.select-col{width:44px;text-align:center}.select-col input{margin:0}.badge{display:inline-flex;gap:5px;align-items:center;padding:4px 8px;border-radius:999px;background:#e9eef5;font-size:12px;font-weight:800}.High,.red,.rag-red{background:#fee2e2;color:#991b1b}.Medium,.amber,.rag-amber{background:#fef3c7;color:#92400e}.Low,.green,.rag-green{background:#dcfce7;color:#166534}.grey{background:#edf1f5;color:#52616f}textarea{width:100%;min-height:150px;margin:8px 0;padding:10px;border:1px solid #c7d0d8;border-radius:7px}input,select{padding:9px;margin:5px 5px 5px 0;border:1px solid #c7d0d8;border-radius:7px;max-width:100%;background:#fff}.filters,.bulk-toolbar{background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:12px}.filters input{min-width:190px}.bulk-toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:12px 0}.bulk-toolbar label span{display:block;font-size:12px;color:#52616f;font-weight:800}.bulk-toolbar select{min-width:190px}.quick-filters{margin:12px 0;display:flex;gap:6px;flex-wrap:wrap}.quick-filters a{padding:8px 10px;border-radius:999px;background:#fff;color:#263746;border:1px solid #dde3ea;text-decoration:none;font-weight:800;font-size:13px}.lead-detail{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.lead-detail div{background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:10px}.stage-banner{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:14px 0;padding:14px;border-radius:8px;border:1px solid #dde3ea}.stage-banner strong{display:block;font-size:18px}.eyebrow{display:block;text-transform:uppercase;font-size:11px;color:#647184;letter-spacing:.04em;font-weight:900}.workflow-rail{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:8px;margin:14px 0}.workflow-step{position:relative;background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:10px;min-height:78px}.workflow-step strong,.workflow-step span{display:block}.workflow-step strong{font-size:12px}.workflow-step span{font-size:12px;color:#647184}.workflow-step.done{border-color:#86efac;background:#f0fdf4}.workflow-step.current{border-color:#f59e0b;background:#fffbeb;box-shadow:inset 0 0 0 1px #f59e0b}.workflow-step.pending{color:#6b7280}.inline-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.inline-actions form{background:#f9fafb;border:1px solid #dde3ea;border-radius:8px;padding:12px}.muted{color:#66727f}.customer-line{white-space:nowrap}.job-short{max-width:360px}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:99px;background:currentColor}@media(max-width:920px){.topbar{align-items:flex-start;flex-direction:column}.pipeline-board,.workflow-rail{grid-template-columns:repeat(2,minmax(0,1fr))}nav{justify-content:flex-start}}@media(max-width:760px){header .wrap,main{padding:14px}.overview{grid-template-columns:repeat(2,minmax(0,1fr))}.pipeline-board,.workflow-rail{grid-template-columns:1fr}.focus-row{grid-template-columns:1fr}table,thead,tbody,tr,th,td{display:block}thead{display:none}tr{border-bottom:12px solid #f3f5f7}td{border-bottom:1px solid #e8edf2}.select-col{width:auto;text-align:left}.customer-line{white-space:normal}.button,button{width:100%;text-align:center}.actions form,.bulk-toolbar label{width:100%}}
-.calculation-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:10px;margin:8px 0}.calculation-strip span{font-size:12px;color:#52616f}.calculation-strip strong{display:block;color:#111827;font-size:15px}.warning-list{border-left:5px solid #f59e0b;background:#fffbeb}.warning-list.red{border-left-color:#dc2626;background:#fef2f2}@media(max-width:760px){.calculation-strip{grid-template-columns:1fr 1fr}.status-grid{grid-template-columns:1fr}}
-:root{--bg:#f7f8fb;--surface:#fff;--surface-soft:#f8fafc;--text:#101828;--muted:#667085;--border:#e4e7ec;--primary:#123c69;--primary-strong:#0b2a4a;--accent:#0f766e;--success:#15945b;--warning:#d97706;--danger:#d92d20;--neutral:#667085;--radius:8px;--shadow:0 14px 34px rgba(16,24,40,.08);--space:16px}body{background:var(--bg);color:var(--text)}.app-shell{min-height:100vh;display:grid;grid-template-columns:248px minmax(0,1fr)}.sidebar{position:sticky;top:0;height:100vh;background:#101828;color:#e5eef9;padding:20px 16px;display:flex;flex-direction:column;gap:18px}.brand-mark{display:flex;gap:10px;align-items:center;padding:0 4px}.brand-mark strong{display:grid;place-items:center;width:38px;height:38px;background:#14b8a6;color:#062a26;border-radius:8px}.brand-mark span{font-weight:900}.side-nav{display:grid;gap:14px;justify-content:stretch}.nav-group{display:grid;gap:4px}.nav-group span{padding:0 12px 3px;color:#98a2b3;font-size:11px;text-transform:uppercase;font-weight:900}.side-nav a{color:#d0d5dd;text-decoration:none;padding:9px 12px;border-radius:8px;font-weight:760;min-height:34px}.side-nav a:hover{background:#1d2939;color:#fff}.sidebar-foot{margin-top:auto;color:#98a2b3;font-size:12px;padding:0 4px}.sidebar-foot strong,.sidebar-foot span{display:block}.workspace{min-width:0}.page-top{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,420px) auto;gap:14px;align-items:center;background:rgba(247,248,251,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:16px 24px;color:var(--text)}.page-top h1{color:var(--text);font-size:28px}.app-kicker{color:#667085;letter-spacing:.08em}main{max-width:1260px;padding:24px}.global-search input{width:100%;margin:0;background:#fff}.top-actions{display:flex;gap:8px;align-items:center}.top-actions form{display:inline-flex}.panel,article,.metric-card,.overview-tile,.job-mini-card,.filters,.bulk-toolbar{border-color:var(--border);border-radius:var(--radius);box-shadow:0 1px 2px rgba(16,24,40,.04)}.panel{margin:0 0 18px}.panel.calm{padding:18px}.panel-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 12px}.panel-heading h2{margin:0}.button,button{background:var(--primary);border-color:var(--primary);border-radius:var(--radius);font-weight:800}.button:hover,button:hover{background:var(--primary-strong)}.button.secondary{border-color:var(--border);background:#fff;color:var(--primary)}.danger-button{background:var(--danger);border-color:var(--danger)}input,select,textarea{border-color:#d0d5dd;border-radius:var(--radius)}table{box-shadow:none}th{background:#f8fafc;color:#475467}.badge{border-radius:999px}.page-intro{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;margin:0 0 18px}.page-intro p{margin:4px 0 0;color:var(--muted);max-width:680px}.section-grid,.field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.empty-state{background:var(--surface);border:1px dashed var(--border);border-radius:var(--radius);padding:20px;color:var(--muted)}.review-card,.install-card,.lead-card,.scan-card{display:block;background:#fff;border:1px solid var(--border);border-left:4px solid var(--neutral);border-radius:var(--radius);padding:15px;text-decoration:none;color:var(--text)}.review-card.green,.install-card.green,.lead-card.green,.scan-card.green{border-left-color:var(--success)}.review-card.amber,.install-card.amber,.lead-card.amber,.scan-card.amber{border-left-color:var(--warning)}.review-card.red,.install-card.red,.lead-card.red,.scan-card.red{border-left-color:var(--danger)}.review-card:hover,.install-card:hover,.lead-card:hover,.scan-card:hover{box-shadow:var(--shadow);border-color:#b8c0cc}.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.meta-row{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:13px}.primary-action-panel{border:1px solid #b6e4da;border-top:4px solid var(--accent);box-shadow:var(--shadow);background:#f7fffd}.primary-action-panel .inline-actions{grid-template-columns:minmax(0,1fr)}.primary-action-panel form{background:#fff}.status-safe{color:var(--success)}.status-warning{color:var(--warning)}.status-danger{color:var(--danger)}.mini-overview{margin-top:0}.filter-panel{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.form-panel label span,.field-grid label span,.stacked-form label span{display:block;color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase}.stacked-form label{display:block;margin-bottom:8px}.stacked-form label small{display:block;color:var(--muted);font-size:12px;margin-top:2px}.stacked-form input,.stacked-form textarea,.form-panel input,.form-panel textarea,.field-grid input{width:100%}.form-warning{display:block;color:var(--warning);font-weight:800;margin:4px 0}.manual button{margin-top:10px}.quick-filters a.active{background:var(--primary);color:#fff;border-color:var(--primary)}.cockpit-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr);gap:16px}.action-list{display:grid;gap:9px}.action-row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px;text-decoration:none;color:var(--text)}.action-count{display:grid;place-items:center;min-width:42px;height:36px;border-radius:8px;background:#eef4ff;color:#123c69;font-weight:900}.action-row.red .action-count{background:#fee4e2;color:#b42318}.action-row.amber .action-count{background:#fef0c7;color:#b54708}.action-row.green .action-count{background:#dcfae6;color:#067647}.summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.summary-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px}.summary-card strong{display:block;font-size:24px}.summary-card span{color:var(--muted);font-size:13px}.tab-list{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;padding-bottom:4px;margin:0 0 14px}.tab-list a{padding:8px 11px;border:1px solid var(--border);border-radius:999px;background:#fff;text-decoration:none;font-weight:800}.tab-list a.active{background:var(--primary);border-color:var(--primary);color:#fff}.advanced-panel{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px}.advanced-panel summary{color:#344054}.snapshot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.snapshot-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px}.snapshot-card p{margin:6px 0;color:var(--muted)}.lead-scan-grid{display:grid;gap:10px}.lead-scan-card{display:grid;grid-template-columns:auto 1.4fr 1fr auto;gap:14px;align-items:center}.lead-scan-card h3{margin:0}.lead-scan-card p{margin:4px 0}.drawer{margin-top:12px}.drawer>summary{padding:12px 14px;background:#fff;border:1px solid var(--border);border-radius:8px}.drawer[open]>summary{border-bottom-left-radius:0;border-bottom-right-radius:0}.drawer-body{border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px;background:#fff;padding:14px}@media(max-width:980px){.app-shell{display:block}.sidebar{position:fixed;top:0;left:0;width:82vw;max-width:300px;height:100%;z-index:300;transform:translateX(-105%);transition:transform .28s cubic-bezier(.4,0,.2,1);overflow-y:auto;padding:20px 16px;display:flex;flex-direction:column;gap:18px}.sidebar.nav-open{transform:translateX(0);box-shadow:24px 0 48px rgba(0,0,0,.3)}.nav-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:299;display:none}.nav-overlay.nav-open{display:block}.nav-close-btn{display:block;width:100%;text-align:right;background:none;border:none;box-shadow:none;color:#9ca3af;font-size:22px;cursor:pointer;padding:0 0 8px;min-height:0;line-height:1;font-weight:400;flex-shrink:0}.page-top{position:sticky;top:0;grid-template-columns:1fr;gap:6px;padding:10px 16px}.global-search,.top-actions{display:none}main{padding:12px 16px}.page-intro{display:block}.cockpit-grid{grid-template-columns:1fr}.pipeline-board{grid-template-columns:repeat(2,minmax(0,1fr))}.pipeline-column{min-width:0}.lead-scan-card{grid-template-columns:1fr}}@media(max-width:760px){.card-grid,.section-grid,.field-grid,.snapshot-grid{grid-template-columns:1fr}.side-nav a{white-space:nowrap}.top-actions .button,.top-actions button{width:auto}.page-top h1{font-size:22px}.filter-panel .button,.filter-panel button{width:auto}.panel-heading{align-items:flex-start;flex-direction:column}.action-row{grid-template-columns:auto 1fr}.action-row .button{grid-column:1 / -1}.overview{grid-template-columns:1fr 1fr}.tab-list a{white-space:nowrap;flex-shrink:0}.lead-scan-card{grid-template-columns:1fr auto;gap:10px}.lead-scan-card>span:nth-child(3){display:none}.setup-steps{grid-template-columns:1fr}table,thead,tbody,tr,th,td{display:block}}
-.logout-form{margin-top:10px}.logout-btn{width:100%;padding:8px 10px;background:transparent;border:1px solid #374151;border-radius:7px;color:#9ca3af;font-size:12px;font-weight:700;cursor:pointer;text-align:left}.logout-btn:hover{background:#1d2939;color:#e5eef9}
-.bnav-item.bnav-active{color:#14b8a6}.bnav-item.bnav-active svg{stroke:#14b8a6}.bnav-add.bnav-active svg{stroke:#062a26}
-.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius)}
-.share-btn{display:none;align-items:center;gap:6px;padding:10px 14px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;color:var(--text);font-weight:700;font-size:14px;min-height:44px;cursor:pointer}
-@media(max-width:760px){input,select,textarea{font-size:16px !important}.table-scroll table{min-width:600px}}
-.page-subtitle{margin:4px 0 0;color:var(--muted);font-size:14px;max-width:680px}.export-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.export-card{display:block;min-height:44px;padding:16px;background:#fff;border:1px solid var(--border);border-radius:10px;text-decoration:none;color:var(--text)}.export-card strong{display:block;margin-bottom:6px}.export-card span{color:var(--muted);font-size:13px}.compact-warning-panel .warning-stack{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}.warning-stack.compact .warning-card{grid-template-columns:1fr auto}.customer-details-panel{border-top:4px solid #123c69}.customer-details-panel>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none}.customer-details-panel>summary::-webkit-details-marker{display:none}.customer-details-panel summary strong,.customer-details-panel summary small{display:block}.customer-details-panel summary small{color:var(--muted);font-size:13px;font-weight:500}.customer-edit-form{display:grid;gap:12px;margin-top:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.compact-form-grid{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.customer-edit-form label span{display:block;color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase;margin-bottom:4px}.customer-edit-form input,.customer-edit-form select,.customer-edit-form textarea{width:100%;margin:0}.customer-edit-form textarea{min-height:86px}.customer-edit-form small{display:block;margin-top:4px;color:var(--muted)}.app-shell{background:linear-gradient(180deg,#fbfcfe 0,#f4f6f9 100%)}.sidebar{background:#0f172a}.side-nav{gap:16px}.side-nav a{font-size:14px;min-height:38px}.nav-group span{letter-spacing:.08em}.page-top{box-shadow:0 10px 30px rgba(16,24,40,.05)}main{display:block}.panel{border-radius:12px}.metric-card,.summary-card,.status-card,.review-card,.install-card,.scan-card,.lead-scan-card,.today-command-card,.warning-card,.setup-step,.export-card{transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}.metric-card:hover,.summary-card:hover,.status-card:hover,.review-card:hover,.install-card:hover,.scan-card:hover,.lead-scan-card:hover,.today-command-card:hover,.warning-card:hover,.setup-step:hover,.export-card:hover{transform:translateY(-1px);box-shadow:0 12px 28px rgba(16,24,40,.08)}.button,button{min-height:40px}.button.secondary,button.secondary{box-shadow:inset 0 0 0 1px var(--border)}.install-card .actions a,.install-card .actions button{min-height:44px}.quick-filters{overflow:auto;padding-bottom:3px}.quick-filters a{white-space:nowrap}.global-search input{min-height:42px}.today-command-card .button,.action-row .button{white-space:nowrap}details.drawer>summary,details.advanced-panel>summary{list-style:none}details.drawer>summary::-webkit-details-marker,details.advanced-panel>summary::-webkit-details-marker{display:none}details.drawer>summary::after,details.advanced-panel>summary::after{content:"Show";float:right;color:var(--muted);font-size:12px}details[open].drawer>summary::after,details[open].advanced-panel>summary::after{content:"Hide"}@media(max-width:980px){.page-top{gap:6px}.page-top h1{font-size:20px}.app-kicker,.page-subtitle{display:none}}@media(max-width:760px){body{font-size:15px}.page-subtitle{font-size:13px}.overview,.summary-strip{grid-template-columns:1fr}.today-command-card,.warning-stack.compact .warning-card,.action-row{grid-template-columns:1fr}.today-command-card .button,.action-row .button,.warning-card .button{width:100%}.split{grid-template-columns:1fr}.lead-detail{grid-template-columns:1fr}.workflow-rail{grid-template-columns:1fr}.workflow-step{min-height:auto}table{border:0;background:transparent}tbody tr{background:#fff;border:1px solid var(--border);border-radius:10px;margin:0 0 12px;padding:8px}td{padding:8px 10px}.global-search{width:100%}.top-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.top-actions form,.top-actions a,.top-actions button{width:100%}}.metric-card strong,.metric-card span,.summary-card strong,.summary-card span{display:block}.metric-card strong,.summary-card strong{margin-bottom:4px}.metric-card span,.summary-card span{line-height:1.25}@media(max-width:420px){.side-nav a{font-size:13px}}
-.mobile-bottom-nav{display:none}
-@media(max-width:980px){
-  .mobile-bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;height:60px;background:#101828;border-top:1px solid #1d2939;z-index:100;padding:0 env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)}
-  .bnav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#9ca3af;text-decoration:none;font-size:10px;font-weight:700;padding:6px 0;min-height:44px}
-  .bnav-item:hover,.bnav-item:active{color:#fff}
-  .bnav-item svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-  .bnav-add svg{fill:#14b8a6;stroke:#14b8a6}
-  .bnav-add{color:#14b8a6}
-  .mobile-bottom-nav button.bnav-item{background:transparent;border:none;box-shadow:none;padding:6px 0;width:auto;font-family:inherit;color:#9ca3af}
-  .workspace{padding-bottom:60px}
-}
-.ios-install-banner{position:fixed;bottom:70px;left:12px;right:12px;background:#1d2939;border:1px solid #374151;border-radius:14px;padding:14px;z-index:150;box-shadow:0 8px 32px rgba(0,0,0,.4)}
-.iib-content{display:flex;align-items:center;gap:12px}
-.iib-icon{width:40px;height:40px;background:#14b8a6;border-radius:10px;display:grid;place-items:center;color:#062a26;font-weight:900;font-size:14px;flex-shrink:0}
-.iib-text strong{display:block;color:#f9fafb;font-size:14px}
-.iib-text small{display:block;color:#9ca3af;font-size:12px;margin-top:2px}
-.iib-dismiss{margin-left:auto;background:none;border:none;color:#9ca3af;font-size:18px;cursor:pointer;padding:4px 8px;min-height:44px;flex-shrink:0}
-.iib-arrow{text-align:center;color:#9ca3af;font-size:12px;margin-top:8px}
-@media(min-width:981px){.ios-install-banner{display:none}}
-.today-money-strip{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 16px}
-@media(min-width:760px){.today-money-strip{grid-template-columns:repeat(4,1fr)}}
-.today-accordion{display:grid;gap:10px}
-.today-group-card{background:#fff;border:1px solid var(--border);border-left:4px solid var(--neutral);border-radius:var(--radius)}
-.today-group-card.red{border-left-color:var(--danger)}
-.today-group-card.amber{border-left-color:var(--warning)}
-.today-group-card.green{border-left-color:var(--success)}
-.today-group-card.quiet{opacity:.7}
-.today-group-card>summary{display:flex;justify-content:space-between;align-items:center;padding:14px;cursor:pointer;list-style:none;font-weight:800}
-.today-group-card>summary::-webkit-details-marker{display:none}
-.today-group-card>summary::after{content:"▸";color:var(--muted);margin-left:auto;padding-left:10px;transition:transform .2s}
-.today-group-card[open]>summary::after{transform:rotate(90deg)}
-.tgc-label{font-size:14px}
-.tgc-body{padding:0 14px 14px}
-.lead-header-strip{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;background:#fff;border:1px solid var(--border);border-left:5px solid var(--neutral);border-radius:var(--radius);padding:14px;margin:0 0 14px}
-.lead-header-strip.rag-red{border-left-color:var(--danger)}
-.lead-header-strip.rag-amber{border-left-color:var(--warning)}
-.lead-header-strip.rag-green{border-left-color:var(--success)}
-.lhs-name{margin:0 0 4px;font-size:18px}
-.lhs-meta{font-size:13px;color:var(--muted)}
-.lhs-badges{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;flex-shrink:0}
-.contact-strip{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
-.contact-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 14px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;color:var(--text);font-weight:700;font-size:14px;min-height:44px}
-.contact-btn:hover{background:#f8fafc;border-color:#b8c0cc}
-@media(max-width:760px){.contact-strip{display:grid;grid-template-columns:1fr 1fr}.lead-header-strip{flex-direction:column}.lhs-badges{justify-content:flex-start}}
+*{box-sizing:border-box}body{font-family:Inter,Arial,sans-serif;margin:0;background:#f6f7f9;color:#17202a;line-height:1.45}header{background:#111827;color:#fff;border-bottom:1px solid #273244}header .wrap,main{max-width:1240px;margin:0 auto;padding:18px}.topbar{display:flex;gap:18px;align-items:center;justify-content:space-between}.app-kicker{margin:0 0 4px;color:#9ca3af;font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.08em}h1{margin:0;font-size:24px;letter-spacing:0}h2{font-size:17px;margin:0 0 12px}h3{font-size:14px;margin:0 0 8px}a{color:#0f5f8f}nav{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}nav a{display:inline-flex;align-items:center;min-height:36px;padding:8px 10px;border-radius:7px;color:#dbe4ef;text-decoration:none;font-weight:700;font-size:13px}nav a:hover,.quick-filters .active{background:#263244;color:#fff}.button,button{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 13px;border:1px solid #17202a;background:#17202a;border-radius:7px;color:#fff;text-decoration:none;cursor:pointer;font-weight:800;font-size:13px}.button:hover,button:hover{background:#0b1117}.button.secondary{background:#fff;color:#17202a}.button.secondary:hover{background:#edf1f5}.compact-button{min-height:32px;padding:7px 10px;font-size:12px}.danger-button{background:#991b1b;border-color:#991b1b}.danger-button:hover{background:#7f1d1d}.actions{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}.brand-strip{display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:12px 14px;margin:0 0 14px}.brand-strip strong{color:#111827}.brand-strip span{color:#5d6977}.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:14px 0}.overview-tile{background:#fff;color:#17202a;border:1px solid #dde3ea;border-left:5px solid #52616f;border-radius:8px;padding:14px;text-decoration:none}.overview-tile strong{display:block;font-size:29px}.overview-tile span{display:block;font-size:12px;color:#5d6977;font-weight:800}.overview-tile.red,.metric-card.red,.action-card.red,.job-mini-card.red{border-left-color:#dc2626}.overview-tile.amber,.metric-card.amber,.action-card.amber,.job-mini-card.amber{border-left-color:#f59e0b}.overview-tile.green,.metric-card.green,.action-card.green,.job-mini-card.green{border-left-color:#16a34a}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.compact-queues{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));margin-top:10px}.metric-card,.metrics div,article,.panel{background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:14px;text-decoration:none;color:#17202a}.active-card{border-left:5px solid #f59e0b}.quiet-card{opacity:.7}.metric-card:hover,.overview-tile:hover,.job-mini-card:hover{border-color:#9aa7b5;box-shadow:0 8px 22px rgba(17,24,39,.08)}.metrics strong{display:block;font-size:27px;color:#111827}.metrics span{font-size:13px;color:#52616f}.status-card{border-left:5px solid #eceff3}.status-card.green{border-left-color:#16a34a}.status-card.amber{border-left-color:#f59e0b}.status-card.red{border-left-color:#dc2626}.status-card small{display:block;color:#66727f;margin-top:5px}.ops-snapshot{margin:14px 0}details{margin-top:12px}summary{cursor:pointer;color:#263746;font-weight:800}.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:14px 0}.today ul,.timeline{padding-left:18px;margin:0}.today li{margin:8px 0}.focus-list{display:grid;gap:8px}.focus-row{display:grid;grid-template-columns:92px 1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid #e5e9ee;border-radius:8px;text-decoration:none;color:#17202a;background:#fff}.focus-main strong,.focus-main span{display:block}.focus-main span{font-size:13px;color:#647184}.action-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.action-card{border-left:5px solid #d8e0e7}.action-card h3{margin-top:8px}.action-card p{margin:7px 0}.pipeline-board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.pipeline-column{background:#f9fafb;border:1px solid #dde3ea;border-radius:8px;padding:10px}.pipeline-column h3{display:flex;justify-content:space-between;align-items:center}.pipeline-column h3 span{background:#e9eef5;border-radius:999px;padding:2px 7px;font-size:12px}.job-mini-card{display:block;background:#fff;border:1px solid #dde3ea;border-left:5px solid #16a34a;border-radius:8px;padding:10px;margin:8px 0;text-decoration:none;color:#17202a}.job-mini-card strong,.job-mini-card span,.job-mini-card small{display:block}.job-mini-card span{font-size:13px;color:#52616f}.job-mini-card small{margin-top:4px;color:#66727f}table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid #dde3ea;border-radius:8px;overflow:hidden}th,td{border-bottom:1px solid #e6ebf0;padding:10px;text-align:left;vertical-align:top;font-size:14px}th{background:#f0f3f6;color:#263746;font-size:12px;text-transform:uppercase;letter-spacing:.04em}tr:last-child td{border-bottom:0}.select-col{width:44px;text-align:center}.select-col input{margin:0}.badge{display:inline-flex;gap:5px;align-items:center;padding:4px 8px;border-radius:999px;background:#e9eef5;font-size:12px;font-weight:800}.High,.red,.rag-red{background:#fee2e2;color:#991b1b}.Medium,.amber,.rag-amber{background:#fef3c7;color:#92400e}.Low,.green,.rag-green{background:#dcfce7;color:#166534}.grey{background:#edf1f5;color:#52616f}textarea{width:100%;min-height:150px;margin:8px 0;padding:10px;border:1px solid #c7d0d8;border-radius:7px}input,select{padding:9px;margin:5px 5px 5px 0;border:1px solid #c7d0d8;border-radius:7px;max-width:100%;background:#fff}.filters,.bulk-toolbar{background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:12px}.filters input{min-width:190px}.bulk-toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:12px 0}.bulk-toolbar label span{display:block;font-size:12px;color:#52616f;font-weight:800}.bulk-toolbar select{min-width:190px}.quick-filters{margin:12px 0;display:flex;gap:6px;flex-wrap:wrap}.quick-filters a{padding:8px 10px;border-radius:999px;background:#fff;color:#263746;border:1px solid #dde3ea;text-decoration:none;font-weight:800;font-size:13px}.lead-detail{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.lead-detail div{background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:10px}.stage-banner{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:14px 0;padding:14px;border-radius:8px;border:1px solid #dde3ea}.stage-banner strong{display:block;font-size:18px}.eyebrow{display:block;text-transform:uppercase;font-size:11px;color:#647184;letter-spacing:.04em;font-weight:900}.workflow-rail{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:8px;margin:14px 0}.workflow-step{position:relative;background:#fff;border:1px solid #dde3ea;border-radius:8px;padding:10px;min-height:78px}.workflow-step strong,.workflow-step span{display:block}.workflow-step strong{font-size:12px}.workflow-step span{font-size:12px;color:#647184}.workflow-step.done{border-color:#86efac;background:#f0fdf4}.workflow-step.current{border-color:#f59e0b;background:#fffbeb;box-shadow:inset 0 0 0 1px #f59e0b}.workflow-step.pending{color:#6b7280}.inline-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.inline-actions form{background:#f9fafb;border:1px solid #dde3ea;border-radius:8px;padding:12px}.muted{color:#66727f}.customer-line{white-space:nowrap}.job-short{max-width:360px}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:99px;background:currentColor}@media(max-width:920px){.topbar{align-items:flex-start;flex-direction:column}.pipeline-board,.workflow-rail{grid-template-columns:repeat(2,minmax(0,1fr))}nav{justify-content:flex-start}}@media(max-width:760px){header .wrap,main{padding:14px}.overview{grid-template-columns:repeat(2,minmax(0,1fr))}.pipeline-board,.workflow-rail{grid-template-columns:1fr}.focus-row{grid-template-columns:1fr}table,thead,tbody,tr,th,td{display:block}thead{display:none}tr{border-bottom:12px solid #f3f5f7}td{border-bottom:1px solid #e8edf2}.select-col{width:auto;text-align:left}.customer-line{white-space:normal}.button,button{width:100%;text-align:center}.actions form,.bulk-toolbar label{width:100%}}
+.calculation-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:10px;margin:8px 0}.calculation-strip span{font-size:12px;color:#52616f}.calculation-strip strong{display:block;color:#111827;font-size:15px}.warning-list{border-left:5px solid #f59e0b;background:#fffbeb}.warning-list.red{border-left-color:#dc2626;background:#fef2f2}
+:root{--bg:#f7f8fb;--surface:#fff;--surface-soft:#f8fafc;--text:#101828;--muted:#667085;--border:#e4e7ec;--primary:#123c69;--primary-strong:#0b2a4a;--accent:#0f766e;--success:#15945b;--warning:#d97706;--danger:#d92d20;--neutral:#667085;--radius:8px;--shadow:0 14px 34px rgba(16,24,40,.08);--space:16px}body{background:var(--bg);color:var(--text)}.app-shell{min-height:100vh;display:grid;grid-template-columns:248px minmax(0,1fr)}.sidebar{position:sticky;top:0;height:100vh;background:#101828;color:#e5eef9;padding:20px 16px;display:flex;flex-direction:column;gap:18px}.brand-mark{display:flex;gap:10px;align-items:center;padding:0 4px}.brand-mark strong{display:grid;place-items:center;width:38px;height:38px;background:#14b8a6;color:#062a26;border-radius:8px}.brand-mark span{font-weight:900}.side-nav{display:grid;gap:14px;justify-content:stretch}.nav-group{display:grid;gap:4px}.nav-group span{padding:0 12px 3px;color:#98a2b3;font-size:11px;text-transform:uppercase;font-weight:900}.side-nav a{color:#d0d5dd;text-decoration:none;padding:9px 12px;border-radius:8px;font-weight:760;min-height:34px}.side-nav a:hover{background:#1d2939;color:#fff}.sidebar-foot{margin-top:auto;color:#98a2b3;font-size:12px;padding:0 4px}.sidebar-foot strong,.sidebar-foot span{display:block}.workspace{min-width:0}.page-top{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,420px) auto;gap:14px;align-items:center;background:rgba(247,248,251,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:16px 24px;color:var(--text)}.page-top h1{color:var(--text);font-size:28px}.app-kicker{color:#667085;letter-spacing:.08em}main{max-width:1260px;padding:24px}.global-search input{width:100%;margin:0;background:#fff}.top-actions{display:flex;gap:8px;align-items:center}.top-actions form{display:inline-flex}.panel,article,.metric-card,.overview-tile,.job-mini-card,.filters,.bulk-toolbar{border-color:var(--border);border-radius:var(--radius);box-shadow:0 1px 2px rgba(16,24,40,.04)}.panel{margin:0 0 18px}.panel.calm{padding:18px}.panel-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 12px}.panel-heading h2{margin:0}.button,button{background:var(--primary);border-color:var(--primary);border-radius:var(--radius);font-weight:800}.button:hover,button:hover{background:var(--primary-strong)}.button.secondary{border-color:var(--border);background:#fff;color:var(--primary)}.danger-button{background:var(--danger);border-color:var(--danger)}input,select,textarea{border-color:#d0d5dd;border-radius:var(--radius)}table{box-shadow:none}th{background:#f8fafc;color:#475467}.badge{border-radius:999px}.page-intro{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;margin:0 0 18px}.page-intro p{margin:4px 0 0;color:var(--muted);max-width:680px}.section-grid,.field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.empty-state{background:var(--surface);border:1px dashed var(--border);border-radius:var(--radius);padding:20px;color:var(--muted)}.review-card,.install-card,.lead-card,.scan-card{display:block;background:#fff;border:1px solid var(--border);border-left:4px solid var(--neutral);border-radius:var(--radius);padding:15px;text-decoration:none;color:var(--text)}.review-card.green,.install-card.green,.lead-card.green,.scan-card.green{border-left-color:var(--success)}.review-card.amber,.install-card.amber,.lead-card.amber,.scan-card.amber{border-left-color:var(--warning)}.review-card.red,.install-card.red,.lead-card.red,.scan-card.red{border-left-color:var(--danger)}.review-card:hover,.install-card:hover,.lead-card:hover,.scan-card:hover{box-shadow:var(--shadow);border-color:#b8c0cc}.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.meta-row{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:13px}.primary-action-panel{border:1px solid #b6e4da;border-top:4px solid var(--accent);box-shadow:var(--shadow);background:#f7fffd}.primary-action-panel .inline-actions{grid-template-columns:minmax(0,1fr)}.primary-action-panel form{background:#fff}.status-safe{color:var(--success)}.status-warning{color:var(--warning)}.status-danger{color:var(--danger)}.mini-overview{margin-top:0}.filter-panel{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.form-panel label span,.field-grid label span,.stacked-form label span{display:block;color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase}.stacked-form label{display:block;margin-bottom:8px}.stacked-form label small{display:block;color:var(--muted);font-size:12px;margin-top:2px}.stacked-form input,.stacked-form textarea,.form-panel input,.form-panel textarea,.field-grid input{width:100%}.form-warning{display:block;color:var(--warning);font-weight:800;margin:4px 0}.manual button{margin-top:10px}.quick-filters a.active{background:var(--primary);color:#fff;border-color:var(--primary)}.cockpit-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr);gap:16px}.action-list{display:grid;gap:9px}.action-row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px;text-decoration:none;color:var(--text)}.action-count{display:grid;place-items:center;min-width:42px;height:36px;border-radius:8px;background:#eef4ff;color:#123c69;font-weight:900}.action-row.red .action-count{background:#fee4e2;color:#b42318}.action-row.amber .action-count{background:#fef0c7;color:#b54708}.action-row.green .action-count{background:#dcfae6;color:#067647}.summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.summary-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px}.summary-card strong{display:block;font-size:24px}.summary-card span{color:var(--muted);font-size:13px}.tab-list{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}.tab-list a{padding:8px 11px;border:1px solid var(--border);border-radius:999px;background:#fff;text-decoration:none;font-weight:800}.tab-list a.active{background:var(--primary);border-color:var(--primary);color:#fff}.advanced-panel{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px}.advanced-panel summary{color:#344054}.snapshot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.snapshot-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px}.snapshot-card p{margin:6px 0;color:var(--muted)}.lead-scan-grid{display:grid;gap:10px}.lead-scan-card{display:grid;grid-template-columns:auto 1.4fr 1fr auto;gap:14px;align-items:center}.lead-scan-card h3{margin:0}.lead-scan-card p{margin:4px 0}.drawer{margin-top:12px}.drawer>summary{padding:12px 14px;background:#fff;border:1px solid var(--border);border-radius:8px}.drawer[open]>summary{border-bottom-left-radius:0;border-bottom-right-radius:0}.drawer-body{border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px;background:#fff;padding:14px}@media(max-width:980px){.app-shell{display:block}.sidebar{position:static;height:auto;padding:14px}.side-nav{display:flex;overflow:auto}.nav-group{display:flex;align-items:center}.nav-group span{display:none}.sidebar-foot{display:none}.page-top{position:static;grid-template-columns:1fr;padding:14px}main{padding:14px}.top-actions{flex-wrap:wrap}.global-search{order:3}.page-intro{display:block}.cockpit-grid{grid-template-columns:1fr}.lead-scan-card{grid-template-columns:1fr}}@media(max-width:760px){.card-grid,.section-grid,.field-grid,.snapshot-grid{grid-template-columns:1fr}.side-nav a{white-space:nowrap}.top-actions .button,.top-actions button{width:auto}.page-top h1{font-size:22px}.filter-panel .button,.filter-panel button{width:auto}.panel-heading{align-items:flex-start;flex-direction:column}.action-row{grid-template-columns:auto 1fr}.action-row .button{grid-column:1 / -1}.overview{grid-template-columns:1fr 1fr}table,thead,tbody,tr,th,td{display:block}}
+.page-subtitle{margin:4px 0 0;color:var(--muted);font-size:14px;max-width:680px}.export-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.export-card{display:block;padding:16px;background:#fff;border:1px solid var(--border);border-radius:10px;text-decoration:none;color:var(--text)}.export-card strong{display:block;margin-bottom:6px}.export-card span{color:var(--muted);font-size:13px}.compact-warning-panel .warning-stack{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}.warning-stack.compact .warning-card{grid-template-columns:1fr auto}.customer-details-panel{border-top:4px solid #123c69}.customer-details-panel>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none}.customer-details-panel>summary::-webkit-details-marker{display:none}.customer-details-panel summary strong,.customer-details-panel summary small{display:block}.customer-details-panel summary small{color:var(--muted);font-size:13px;font-weight:500}.customer-edit-form{display:grid;gap:12px;margin-top:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.compact-form-grid{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.customer-edit-form label span{display:block;color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase;margin-bottom:4px}.customer-edit-form input,.customer-edit-form select,.customer-edit-form textarea{width:100%;margin:0}.customer-edit-form textarea{min-height:86px}.customer-edit-form small{display:block;margin-top:4px;color:var(--muted)}.app-shell{background:linear-gradient(180deg,#fbfcfe 0,#f4f6f9 100%)}.sidebar{background:#0f172a}.side-nav{gap:16px}.side-nav a{font-size:14px;min-height:38px}.nav-group span{letter-spacing:.08em}.page-top{box-shadow:0 10px 30px rgba(16,24,40,.05)}main{display:block}.panel{border-radius:12px}.metric-card,.summary-card,.status-card,.review-card,.install-card,.scan-card,.lead-scan-card,.today-command-card,.warning-card,.setup-step,.export-card{transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}.metric-card:hover,.summary-card:hover,.status-card:hover,.review-card:hover,.install-card:hover,.scan-card:hover,.lead-scan-card:hover,.today-command-card:hover,.warning-card:hover,.setup-step:hover,.export-card:hover{transform:translateY(-1px);box-shadow:0 12px 28px rgba(16,24,40,.08)}.button,button{min-height:40px}.button.secondary,button.secondary{box-shadow:inset 0 0 0 1px var(--border)}.quick-filters{overflow:auto;padding-bottom:3px}.quick-filters a{white-space:nowrap}.global-search input{min-height:42px}.today-command-card .button,.action-row .button{white-space:nowrap}details.drawer>summary,details.advanced-panel>summary{list-style:none}details.drawer>summary::-webkit-details-marker,details.advanced-panel>summary::-webkit-details-marker{display:none}details.drawer>summary::after,details.advanced-panel>summary::after{content:"Show";float:right;color:var(--muted);font-size:12px}details[open].drawer>summary::after,details[open].advanced-panel>summary::after{content:"Hide"}.money-card-list{display:grid;gap:12px}.money-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;background:#fff;border:1px solid var(--border);border-left:5px solid var(--warning);border-radius:14px;padding:16px}.money-card.red{border-left-color:var(--danger)}.money-card.green{border-left-color:var(--success)}.money-card h3{font-size:16px;margin:2px 0 4px}.money-card p{margin:0 0 8px}.money-card strong{font-size:22px;color:var(--text);white-space:nowrap}.money-card .actions{grid-column:1 / -1;margin:0}.mobile-bottom-nav{display:none}.login-screen{min-height:100vh;background:radial-gradient(circle at top left,#dbeafe,transparent 34%),#f6f8fb}.login-wrap{min-height:100vh;display:grid;place-items:center;padding:24px}.login-card{width:min(440px,100%);background:#fff;border:1px solid var(--border);border-radius:22px;padding:28px;box-shadow:0 24px 60px rgba(15,23,42,.14)}.login-card .brand-mark{margin-bottom:18px}.login-card h1{font-size:32px;margin:0 0 6px}.login-card .warning-card{display:block;margin:14px 0}@media(max-width:980px){body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}.mobile-bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:50;display:grid;grid-template-columns:repeat(5,1fr);gap:4px;padding:8px 8px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.96);border-top:1px solid var(--border);box-shadow:0 -12px 30px rgba(15,23,42,.08);backdrop-filter:blur(14px)}.mobile-bottom-nav a{display:flex;align-items:center;justify-content:center;min-height:48px;border-radius:14px;text-decoration:none;font-size:12px;font-weight:850;color:#334155}.mobile-bottom-nav a:hover,.mobile-bottom-nav a:focus{background:#e0f2fe;color:#075985;outline:2px solid transparent}.sidebar{scroll-margin-top:16px}.sidebar-foot form{margin-top:10px}.money-card{grid-template-columns:1fr}.money-card strong{font-size:26px}.money-card .actions{display:grid;grid-template-columns:1fr 1fr}.money-card .actions a{width:100%}.side-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;overflow:visible}.nav-group{display:contents}.nav-group span{display:none}.side-nav a{white-space:normal;justify-content:center;text-align:center;background:#172033;color:#e5eef9;padding:10px 8px}.side-nav a:hover{background:#22304a}.sidebar{gap:14px}.brand-mark{margin-bottom:4px}.page-top{gap:10px}.top-actions{justify-content:flex-start}.top-actions form{display:inline-flex}.top-actions .button,.top-actions button{min-height:42px}}@media(max-width:760px){body{font-size:15px}.page-subtitle{font-size:13px}.overview,.summary-strip{grid-template-columns:1fr}.today-command-card,.warning-stack.compact .warning-card,.action-row{grid-template-columns:1fr}.today-command-card .button,.action-row .button,.warning-card .button{width:100%}.split{grid-template-columns:1fr}.lead-detail{grid-template-columns:1fr}.workflow-rail{grid-template-columns:1fr}.workflow-step{min-height:auto}table{border:0;background:transparent}tbody tr{background:#fff;border:1px solid var(--border);border-radius:10px;margin:0 0 12px;padding:8px}td{padding:8px 10px}.global-search{width:100%}.top-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.top-actions form,.top-actions a,.top-actions button{width:100%}}@media(max-width:520px){.money-card .actions{grid-template-columns:1fr}.login-card{border-radius:18px;padding:22px}.login-card h1{font-size:27px}}@media(max-width:420px){.side-nav{grid-template-columns:1fr 1fr}.side-nav a{font-size:13px}}
 `;
 }
 
 function appScript() {
-  return `const money=(value)=>Number(String(value||"").replace(/[^0-9.-]/g,""))||0;const fmt=(value)=>new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(value);const selectAll=document.getElementById("select-all-leads");if(selectAll){selectAll.addEventListener("change",()=>document.querySelectorAll(".lead-select").forEach((box)=>{box.checked=selectAll.checked;}));}document.querySelectorAll('form[action="/leads/bulk"]').forEach((form)=>{form.addEventListener("submit",(event)=>{const action=form.querySelector('[name="bulkAction"]')?.value;const selected=form.querySelectorAll(".lead-select:checked").length;if(!selected){event.preventDefault();alert("Select at least one lead first.");return;}if(action==="delete"&&!confirm("Permanently delete selected leads? This cannot be undone.")){event.preventDefault();}});});document.querySelectorAll(".payment-form").forEach((form)=>{const amount=form.querySelector('[name="amount"]');const output=form.querySelector(".balance-after");const type=form.querySelector('[name="payment_type"]');const update=()=>{if(!output)return;const before=money(form.dataset.balanceBefore);const value=money(amount?.value);const sign=type?.value==="refund"?1:-1;output.textContent=fmt(Math.max(before+(value*sign),0));};amount?.addEventListener("input",update);type?.addEventListener("change",update);update();});document.querySelectorAll(".supplier-invoice-form").forEach((form)=>{const net=form.querySelector('[name="net_amount"]');const vat=form.querySelector('[name="vat_amount"]');const gross=form.querySelector('[name="gross_amount"]');const warning=document.createElement("span");warning.className="form-warning";gross?.parentElement?.appendChild(warning);let grossEdited=false;gross?.addEventListener("input",()=>{grossEdited=true;update();});const update=()=>{const calculated=money(net?.value)+money(vat?.value);if(gross&&!grossEdited&&calculated>0)gross.value=calculated.toFixed(2);const entered=money(gross?.value);warning.textContent=entered&&calculated&&Math.abs(entered-calculated)>0.009?"Gross total does not match net + VAT. Check the invoice total.":"";};net?.addEventListener("input",update);vat?.addEventListener("input",update);update();});const offlineBanner=document.createElement('div');offlineBanner.id='offline-banner';offlineBanner.style.cssText='display:none;position:fixed;top:0;left:0;right:0;background:#7f1d1d;color:#fff;text-align:center;padding:8px;font-size:13px;font-weight:700;z-index:200';offlineBanner.textContent='You are offline. Changes will not save until you reconnect.';document.body.appendChild(offlineBanner);window.addEventListener('offline',()=>offlineBanner.style.display='block');window.addEventListener('online',()=>offlineBanner.style.display='none');
-(function(){
-  const isIos=()=>/iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isStandalone=()=>window.navigator.standalone===true;
-  const dismissed=()=>localStorage.getItem('ady_install_dismissed');
-  if(isIos()&&!isStandalone()&&!dismissed()){
-    const banner=document.getElementById('ios-install-banner');
-    if(banner){
-      setTimeout(()=>{ banner.hidden=false; },2000);
-    }
+  return `const money=(value)=>Number(String(value||"").replace(/[^0-9.-]/g,""))||0;const fmt=(value)=>new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(value);const selectAll=document.getElementById("select-all-leads");if(selectAll){selectAll.addEventListener("change",()=>document.querySelectorAll(".lead-select").forEach((box)=>{box.checked=selectAll.checked;}));}document.querySelectorAll('form[action="/leads/bulk"]').forEach((form)=>{form.addEventListener("submit",(event)=>{const action=form.querySelector('[name="bulkAction"]')?.value;const selected=form.querySelectorAll(".lead-select:checked").length;if(!selected){event.preventDefault();alert("Select at least one lead first.");return;}if(action==="delete"&&!confirm("Permanently delete selected leads? This cannot be undone.")){event.preventDefault();}});});document.querySelectorAll(".payment-form").forEach((form)=>{const amount=form.querySelector('[name="amount"]');const output=form.querySelector(".balance-after");const type=form.querySelector('[name="payment_type"]');const update=()=>{if(!output)return;const before=money(form.dataset.balanceBefore);const value=money(amount?.value);const sign=type?.value==="refund"?1:-1;output.textContent=fmt(Math.max(before+(value*sign),0));};amount?.addEventListener("input",update);type?.addEventListener("change",update);update();});document.querySelectorAll(".supplier-invoice-form").forEach((form)=>{const net=form.querySelector('[name="net_amount"]');const vat=form.querySelector('[name="vat_amount"]');const gross=form.querySelector('[name="gross_amount"]');const warning=document.createElement("span");warning.className="form-warning";gross?.parentElement?.appendChild(warning);let grossEdited=false;gross?.addEventListener("input",()=>{grossEdited=true;update();});const update=()=>{const calculated=money(net?.value)+money(vat?.value);if(gross&&!grossEdited&&calculated>0)gross.value=calculated.toFixed(2);const entered=money(gross?.value);warning.textContent=entered&&calculated&&Math.abs(entered-calculated)>0.009?"Gross total does not match net + VAT. Check the invoice total.":"";};net?.addEventListener("input",update);vat?.addEventListener("input",update);update();});`;
+}
+
+/* ============================================================
+   AY DESIGN-SYSTEM COMPONENT HELPERS (Phase 2)
+   Server-side HTML builders that emit the ay- prefixed markup
+   from styles/components.css. These mirror the plan's React
+   components but as string helpers, matching this codebase's
+   existing pattern (badge()/leadTable()). All input is escaped.
+   ============================================================ */
+
+// Maps the REAL lead status values (see STATUSES) to a plain-English
+// label and a badge colour variant. Plan Appendix A, adapted to live data.
+const AY_STAGE_BADGE = {
+  "New":                    { label: "New enquiry",      variant: "red"   },
+  "Draft created":          { label: "Draft ready",      variant: "amber" },
+  "Awaiting approval":      { label: "Awaiting approval", variant: "amber" },
+  "Needs call":             { label: "Needs call",       variant: "red"   },
+  "Awaiting photos":        { label: "Awaiting photos",  variant: "amber" },
+  "Quote booked":           { label: "Quote booked",     variant: "blue"  },
+  "Replied":                { label: "Replied",          variant: "blue"  },
+  "Follow-up due":          { label: "Follow-up due",    variant: "amber" },
+  "Quoted":                 { label: "Quoted",           variant: "amber" },
+  "Won":                    { label: "Won",              variant: "green" },
+  "Installation completed": { label: "Installation done",variant: "green" },
+  "Paid":                   { label: "Paid",             variant: "green" },
+  "Review requested":       { label: "Review requested", variant: "blue"  },
+  "Closed":                 { label: "Closed",           variant: "gray"  },
+  "Lost":                   { label: "Lost",             variant: "gray"  },
+  "Out of area":            { label: "Out of area",      variant: "gray"  },
+  "Duplicate":              { label: "Duplicate",        variant: "gray"  },
+  "Archived":               { label: "Archived",         variant: "gray"  }
+};
+
+const AY_BADGE_VARIANTS = new Set(["red", "amber", "green", "blue", "gray"]);
+
+// Generic status badge with coloured dot + text (never colour alone).
+function ayBadge({ variant = "gray", label = "", noDot = false } = {}) {
+  const safeVariant = AY_BADGE_VARIANTS.has(variant) ? variant : "gray";
+  return `<span class="ay-badge ay-badge--${safeVariant}${noDot ? " ay-badge--no-dot" : ""}">${escapeHtml(label)}</span>`;
+}
+
+// Resolve a lead/job status string to its badge.
+function ayStageBadge(status) {
+  const mapped = AY_STAGE_BADGE[status];
+  if (mapped) return ayBadge({ variant: mapped.variant, label: mapped.label });
+  return ayBadge({ variant: "gray", label: status || "Unknown" });
+}
+
+// Button or link. Pass href to render an <a>; omit for a <button>.
+function ayButton({ label, href, variant = "primary", size = "md", fullWidth = false, type, disabled = false, attrs = "" } = {}) {
+  const classes = [
+    "ay-btn",
+    `ay-btn--${variant}`,
+    size && size !== "md" ? `ay-btn--${size}` : "",
+    fullWidth ? "ay-btn--full" : ""
+  ].filter(Boolean).join(" ");
+  const inner = escapeHtml(label || "");
+  if (href && !disabled) {
+    return `<a class="${classes}" href="${escapeAttr(href)}"${attrs ? " " + attrs : ""}>${inner}</a>`;
   }
-  window.dismissIosInstall=function(){
-    const banner=document.getElementById('ios-install-banner');
-    if(banner) banner.hidden=true;
-    localStorage.setItem('ady_install_dismissed','1');
-  };
-})();
-(function(){const p=location.pathname;document.querySelectorAll('.bnav-item[href]').forEach(a=>{const h=a.getAttribute('href');if(h&&(p===h||p.startsWith(h+'/'))){a.classList.add('bnav-active');}});})();
-(function(){const btn=document.getElementById('nav-menu-btn');const sidebar=document.querySelector('.sidebar');const overlay=document.getElementById('nav-overlay');const closeBtn=document.getElementById('nav-close-btn');function openNav(){if(!sidebar)return;sidebar.classList.add('nav-open');if(overlay)overlay.classList.add('nav-open');document.body.style.overflow='hidden';}function closeNav(){if(!sidebar)return;sidebar.classList.remove('nav-open');if(overlay)overlay.classList.remove('nav-open');document.body.style.overflow='';}if(btn)btn.addEventListener('click',openNav);if(overlay)overlay.addEventListener('click',closeNav);if(closeBtn)closeBtn.addEventListener('click',closeNav);document.addEventListener('keydown',function(e){if(e.key==='Escape')closeNav();});})();
-document.querySelectorAll('form:not([data-no-loading])').forEach(form=>{form.addEventListener('submit',function(){const btn=form.querySelector('button[type="submit"],button:not([type="button"]):not([type="reset"])');if(btn&&!btn.disabled){btn.disabled=true;btn.dataset.orig=btn.textContent;btn.textContent='Saving…';}});});
-if(navigator.share&&document.querySelector('.share-btn')){document.querySelectorAll('.share-btn').forEach(btn=>{btn.style.display='inline-flex';btn.addEventListener('click',()=>{const d={title:btn.dataset.title||document.title,text:btn.dataset.text||'',url:btn.dataset.url||location.href};navigator.share(d).catch(()=>{});});});}
-`;
+  const disabledAttr = disabled ? ' disabled aria-disabled="true"' : "";
+  const typeAttr = type ? ` type="${escapeAttr(type)}"` : ' type="button"';
+  return `<button class="${classes}"${typeAttr}${disabledAttr}${attrs ? " " + attrs : ""}>${inner}</button>`;
+}
+
+// Metric / summary card. Renders as a link when href is supplied.
+function aySummaryCard({ label, value, sub, href } = {}) {
+  const body = `<p class="ay-summary-card__label">${escapeHtml(label || "")}</p>`
+    + `<p class="ay-summary-card__value">${escapeHtml(String(value == null ? "" : value))}</p>`
+    + (sub ? `<p class="ay-summary-card__sub">${escapeHtml(sub)}</p>` : "");
+  if (href) {
+    return `<a class="ay-summary-card ay-card--clickable" href="${escapeAttr(href)}">${body}</a>`;
+  }
+  return `<div class="ay-summary-card">${body}</div>`;
+}
+
+// Action card for the Today page. Returns "" when count is 0 so callers
+// can suppress empty sections (plan Phase 4 / 15.3).
+function ayActionCard({ variant = "amber", title, count = 0, badgeLabel, meta, actionLabel, actionHref } = {}) {
+  if (!count) return "";
+  const badgeText = badgeLabel || (count === 1 ? "1 item" : `${count} items`);
+  const cardVariant = ["red", "amber", "blue", "green"].includes(variant) ? variant : "amber";
+  const action = actionLabel
+    ? ayButton({ label: actionLabel, href: actionHref, variant: "primary", size: "sm" })
+    : "";
+  return `<div class="ay-action-card ay-action-card--${cardVariant}">`
+    + `<div class="ay-action-card__header">`
+    + `<h3 class="ay-action-card__title">${escapeHtml(title || "")}</h3>`
+    + ayBadge({ variant: cardVariant, label: badgeText })
+    + `</div>`
+    + (meta ? `<p class="ay-action-card__meta">${escapeHtml(meta)}</p>` : "")
+    + (action ? `<div class="ay-action-card__footer">${action}</div>` : "")
+    + `</div>`;
+}
+
+// Job card for list views (mobile-friendly). meta parts joined with middots.
+function ayJobCard({ customerName, metaParts = [], status, isAtRisk = false, value, primaryLabel, primaryHref, detailHref } = {}) {
+  const meta = metaParts.filter(Boolean).map((part) => escapeHtml(String(part))).join(" · ");
+  const badges = ayStageBadge(status)
+    + (isAtRisk ? ayBadge({ variant: "red", label: "Job at risk" }) : "");
+  const actions = [
+    value ? `<span class="ay-job-card__value">${escapeHtml(String(value))}</span>` : "",
+    primaryLabel ? ayButton({ label: primaryLabel, href: primaryHref, variant: "primary", size: "sm" }) : "",
+    detailHref ? ayButton({ label: "View job", href: detailHref, variant: "ghost", size: "sm" }) : ""
+  ].filter(Boolean).join("");
+  return `<div class="ay-job-card">`
+    + `<div class="ay-job-card__main">`
+    + `<div class="ay-job-card__top"><span class="ay-job-card__name">${escapeHtml(customerName || "")}</span>${badges}</div>`
+    + (meta ? `<p class="ay-job-card__meta">${meta}</p>` : "")
+    + `</div>`
+    + `<div class="ay-job-card__actions">${actions}</div>`
+    + `</div>`;
+}
+
+const AY_SYSTEM_STATUS = {
+  "safe":           { label: "Safe",           variant: "green" },
+  "warning":        { label: "Warning",        variant: "amber" },
+  "action-needed":  { label: "Action needed",  variant: "red"   },
+  "disabled":       { label: "Disabled",       variant: "gray"  },
+  "not-configured": { label: "Not configured", variant: "gray"  }
+};
+
+// System status card. details (already-escaped HTML) shown in a <details>.
+function aySystemCard({ title, description, status = "safe", lastChecked, details, actionLabel, actionHref } = {}) {
+  const meta = AY_SYSTEM_STATUS[status] || AY_SYSTEM_STATUS.safe;
+  const action = actionLabel && actionHref
+    ? ayButton({ label: actionLabel, href: actionHref, variant: "secondary", size: "sm" })
+    : "";
+  const detailsBlock = details
+    ? `<details style="margin-top:var(--ay-space-4)"><summary class="ay-system-card__last-checked" style="cursor:pointer">Details</summary>`
+      + `<div style="margin-top:var(--ay-space-3);padding:var(--ay-space-3);background:var(--ay-surface-subtle);border:1px solid var(--ay-border);border-radius:var(--ay-radius-sm);font-size:13px;color:var(--ay-text-secondary);font-family:var(--ay-font-mono)">${details}</div></details>`
+    : "";
+  return `<div class="ay-system-card">`
+    + `<div class="ay-system-card__header"><h3 class="ay-system-card__title">${escapeHtml(title || "")}</h3>${ayBadge({ variant: meta.variant, label: meta.label, noDot: true })}</div>`
+    + `<p class="ay-system-card__desc">${escapeHtml(description || "")}</p>`
+    + `<div class="ay-system-card__footer"><div style="display:flex;gap:var(--ay-space-2);align-items:center">${action}</div>`
+    + (lastChecked ? `<span class="ay-system-card__last-checked">Last checked: ${escapeHtml(lastChecked)}</span>` : "")
+    + `</div>${detailsBlock}</div>`;
+}
+
+// Empty state with optional action.
+function ayEmptyState({ title, body, actionLabel, actionHref } = {}) {
+  const icon = `<div class="ay-empty__icon" aria-hidden="true"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg></div>`;
+  const action = actionLabel && actionHref
+    ? ayButton({ label: actionLabel, href: actionHref, variant: "secondary" })
+    : "";
+  return `<div class="ay-empty" role="status">${icon}`
+    + `<h3 class="ay-empty__title">${escapeHtml(title || "")}</h3>`
+    + (body ? `<p class="ay-empty__body">${escapeHtml(body)}</p>` : "")
+    + action
+    + `</div>`;
+}
+
+// Server-rendered filter tabs as links. tabs: [{label, href, count, active}].
+function ayFilterTabs(tabs = [], ariaLabel = "Filter options") {
+  const items = tabs.map((tab) => {
+    const count = tab.count !== undefined && tab.count > 0
+      ? `<span class="ay-filter-tab__count">${escapeHtml(String(tab.count))}</span>`
+      : "";
+    return `<a class="ay-filter-tab${tab.active ? " ay-filter-tab--active" : ""}" href="${escapeAttr(tab.href || "#")}"${tab.active ? ' aria-current="page"' : ""}>${escapeHtml(tab.label || "")}${count}</a>`;
+  }).join("");
+  return `<div class="ay-filter-tabs" role="tablist" aria-label="${escapeAttr(ariaLabel)}">${items}</div>`;
+}
+
+// "All caught up" banner for the Today page zero-state.
+function ayAllClear(title = "All caught up", body = "Nothing needs your attention right now.") {
+  return `<div class="ay-all-clear"><h2 class="ay-all-clear__title">${escapeHtml(title)}</h2><p class="ay-all-clear__body">${escapeHtml(body)}</p></div>`;
+}
+
+// Inline line icons (Appendix C). 1.5px stroke, currentColor, rounded.
+const AY_ICONS = {
+  today:         '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  leads:         '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  jobs:          '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>',
+  supplier:      '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  installations: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  money:         '<circle cx="12" cy="12" r="10"/><path d="M9.5 9A2.5 2.5 0 0 1 14.5 9c0 1.5-1 2-2 3s-1.5 1.5-1.5 2.5h5"/>',
+  finance:       '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  settings:      '<circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>',
+  system:        '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>',
+  exports:       '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  more:          '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+  back:          '<path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>'
+};
+
+function ayIcon(name, size = 18) {
+  const paths = AY_ICONS[name];
+  if (!paths) return "";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+// Back-to-X link for detail pages (plan 14.1).
+function ayBackLink(href, label) {
+  return `<a class="ay-back-link" href="${escapeAttr(href)}"><span class="ay-back-link__icon">${ayIcon("back", 16)}</span>${escapeHtml(label)}</a>`;
+}
+
+// Today action item card from a commercialActionItems() entry.
+const AY_TONE_BADGE = { red: "At risk", amber: "Action", green: "On track", blue: "In progress" };
+function ayTodayItemCard(item) {
+  const tone = ["red", "amber", "green", "blue"].includes(item.tone) ? item.tone : "amber";
+  const meta = [item.postcode, item.reason].filter(Boolean).map((part) => escapeHtml(String(part))).join(" · ");
+  const value = item.value ? `<span class="ay-job-card__value">${escapeHtml(formatMoney(item.value))}</span>` : "";
+  const action = ayButton({ label: item.nextAction || "Open", href: item.href, variant: "primary", size: "sm" });
+  return `<div class="ay-action-card ay-action-card--${tone}">`
+    + `<div class="ay-action-card__header"><h3 class="ay-action-card__title">${escapeHtml(item.customer || "")}</h3>${ayBadge({ variant: tone, label: AY_TONE_BADGE[tone] })}</div>`
+    + (meta ? `<p class="ay-action-card__meta">${meta}</p>` : "")
+    + `<div class="ay-action-card__footer">${value}${action}</div>`
+    + `</div>`;
+}
+
+// Adapt a systemChecks()/integrationReadiness() entry {label,value,tone,detail}
+// to an ay system status card.
+const AY_TONE_TO_STATUS = { green: "safe", amber: "warning", red: "action-needed", grey: "not-configured" };
+function ayCheckCard(check) {
+  return aySystemCard({
+    title: check.label,
+    description: [check.value, check.detail].filter(Boolean).join(" — ") || check.label,
+    status: AY_TONE_TO_STATUS[check.tone] || "not-configured"
+  });
+}
+
+// Responsive wrapper for a set of system cards.
+function aySystemGrid(cards) {
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--ay-space-3)">${cards.join("")}</div>`;
 }
 
 function leadTable(leads, options = {}) {
@@ -2724,18 +2973,21 @@ function leadTable(leads, options = {}) {
 }
 
 function leadScanCards(leads, state = {}) {
-  if (!leads.length) return `<p class="empty-state">No leads match this view.</p>`;
+  if (!leads.length) return ayEmptyState({ title: "No leads here", body: "No leads match this view." });
   const financeState = ensureFinanceState(state || {});
-  return `<div class="lead-scan-grid">${leads.map((lead) => {
+  return `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${leads.map((lead) => {
     ensureJobFields(lead);
     const finance = jobFinancials(lead, financeState);
-    const tone = lead.operational_risk_level || "green";
-    return `<a class="scan-card lead-scan-card ${escapeAttr(tone)}" href="/leads/${encodeURIComponent(lead.id)}">
-      <span>${ragBadge(tone)}</span>
-      <span><h3>${escapeHtml(lead.customerName || lead.customerPostcode || lead.id)}</h3><p>${escapeHtml([lead.customerPostcode, workflowLabel(lead.workflow_type), stageLabel(lead)].filter(Boolean).join(" / "))}</p><p class="muted">${escapeHtml(lead.customerPhone || lead.customerEmail || "No contact recorded")}</p></span>
-      <span><strong>Next action</strong><p>${escapeHtml(lead.next_best_action || lead.nextAction || "Review lead")}</p><p class="muted">${escapeHtml(shortDate(lead.updatedAt || lead.receivedAt))}</p></span>
-      <span>${finance.customerOutstanding ? `<strong>${escapeHtml(formatMoney(finance.customerOutstanding))}</strong><small>Customer balance</small>` : `<strong>${escapeHtml(statusLabel(finance.customerPaymentStatus || "No balance"))}</strong><small>Customer money</small>`}</span>
-    </a>`;
+    return ayJobCard({
+      customerName: lead.customerName || lead.customerPostcode || lead.id,
+      metaParts: [lead.customerPostcode, workflowLabel(lead.workflow_type), lead.customerPhone || lead.customerEmail || "No contact"],
+      status: lead.status,
+      isAtRisk: (lead.operational_risk_level || "green") === "red",
+      value: finance.customerOutstanding ? formatMoney(finance.customerOutstanding) : "",
+      primaryLabel: lead.next_best_action || lead.nextAction || "Open job",
+      primaryHref: `/leads/${encodeURIComponent(lead.id)}`,
+      detailHref: `/leads/${encodeURIComponent(lead.id)}`
+    });
   }).join("")}</div>`;
 }
 
@@ -2979,25 +3231,26 @@ function riskWeightForUi(value) {
 }
 
 function supplierEmailCards(emails, leads) {
-  if (!emails.length) return `<p class="empty-state">No supplier emails match this view.</p>`;
+  if (!emails.length) return ayEmptyState({ title: "Inbox clear", body: "No supplier emails match this view." });
   const leadNames = new Map(leads.map((lead) => [lead.id, lead.customerName || lead.customerPostcode || lead.id]));
-  return `<div class="card-grid">${emails.map((email) => {
+  return `<div>${emails.map((email) => {
     const text = `${email.subject || ""} ${email.rawSummary || ""}`;
     const category = /invoice|statement|proforma|vat|payment|balance/i.test(text)
       ? "Supplier invoice"
       : /delivery|dispatch|despatch|delivered|lead time|eta|confirmation/i.test(text)
         ? "Delivery update"
         : "Supplier message";
-    const tone = email.matchedLeadId ? "green" : email.reviewStatus === "Irrelevant" || email.reviewStatus === "Archived" ? "grey" : "amber";
-    return `<article class="review-card ${tone}">
-      <div class="meta-row">${badge(category)} ${badge(email.reviewStatus || "Needs review")}</div>
-      <h3>${escapeHtml(email.supplierName || email.supplierEmail || "Unknown supplier")}</h3>
-      <p><strong>${escapeHtml(email.subject || "")}</strong></p>
-      <p class="muted">${escapeHtml(String(email.rawSummary || "").slice(0, 180))}</p>
-      <p class="meta-row"><span>${escapeHtml(shortDate(email.receivedAt))}</span><span>${escapeHtml(email.extractedOrderReference || email.invoiceReference || "No reference")}</span></p>
-      <p>${email.matchedLeadId ? `<a href="/leads/${encodeURIComponent(email.matchedLeadId)}">${escapeHtml(leadNames.get(email.matchedLeadId) || email.matchedLeadId)}</a>` : `<span class="status-warning">Unlinked</span>`}</p>
-      <a class="button compact-button" href="/supplier-emails/${encodeURIComponent(email.id)}">Review</a>
-    </article>`;
+    const catBadge = ayBadge({ variant: category === "Supplier invoice" ? "amber" : category === "Delivery update" ? "blue" : "gray", label: category });
+    const statusBadge = ayBadge({ variant: email.matchedLeadId ? "green" : "gray", label: email.reviewStatus || "Needs review" });
+    const linked = email.matchedLeadId
+      ? `<a href="/leads/${encodeURIComponent(email.matchedLeadId)}" style="color:var(--ay-text-link)">${escapeHtml(leadNames.get(email.matchedLeadId) || email.matchedLeadId)}</a>`
+      : `<span style="color:var(--ay-amber-text)">Unlinked</span>`;
+    return `<div class="ay-inbox-card">
+      <div class="ay-inbox-card__header"><span class="ay-inbox-card__sender">${escapeHtml(email.supplierName || email.supplierEmail || "Unknown supplier")}</span><span class="ay-inbox-card__date">${escapeHtml(shortDate(email.receivedAt))}</span></div>
+      <p class="ay-inbox-card__subject">${escapeHtml(email.subject || "")}</p>
+      <div class="ay-inbox-card__meta"><span class="ay-inbox-card__meta-item">${catBadge} ${statusBadge}</span><span class="ay-inbox-card__meta-item"><strong>Ref:</strong> ${escapeHtml(email.extractedOrderReference || email.invoiceReference || "None")}</span><span class="ay-inbox-card__meta-item"><strong>Job:</strong> ${linked}</span></div>
+      <div class="ay-inbox-card__actions">${ayButton({ label: "Review", href: `/supplier-emails/${encodeURIComponent(email.id)}`, variant: "primary", size: "sm" })}</div>
+    </div>`;
   }).join("")}</div>`;
 }
 
@@ -3049,6 +3302,7 @@ function matchesQuickFilter(lead, quick) {
   if (quick === "payments") return Boolean((lead.installation_completed_at || lead.balance_requested_at) && !lead.balance_paid_at);
   if (quick === "overdue") return lead.operational_risk_level === "red";
   if (quick === "repairs") return lead.workflow_type === "repair";
+  if (quick === "closed") return ["Archived", "Duplicate", "Lost", "Closed"].includes(lead.status) || Boolean(lead.closed_at);
   return true;
 }
 
@@ -3105,12 +3359,8 @@ function textInput(name, placeholder, value) {
   return `<input name="${escapeAttr(name)}" placeholder="${escapeAttr(placeholder)}" value="${escapeAttr(value || "")}">`;
 }
 
-function labeledInput(name, label, value = "", type = "text", help = "", attrs = {}) {
-  const extraAttrs = Object.entries(attrs)
-    .filter(([, attrValue]) => attrValue !== undefined && attrValue !== null && attrValue !== false)
-    .map(([attrName, attrValue]) => attrValue === true ? ` ${escapeAttr(attrName)}` : ` ${escapeAttr(attrName)}="${escapeAttr(attrValue)}"`)
-    .join("");
-  return `<label><span>${escapeHtml(label)}</span><input name="${escapeAttr(name)}" type="${escapeAttr(type)}" value="${escapeAttr(value || "")}" placeholder="${escapeAttr(label)}"${extraAttrs}>${help ? `<small>${escapeHtml(help)}</small>` : ""}</label>`;
+function labeledInput(name, label, value = "", type = "text", help = "") {
+  return `<label><span>${escapeHtml(label)}</span><input name="${escapeAttr(name)}" type="${escapeAttr(type)}" value="${escapeAttr(value || "")}" placeholder="${escapeAttr(label)}">${help ? `<small>${escapeHtml(help)}</small>` : ""}</label>`;
 }
 
 function textareaInput(name, placeholder, value) {
@@ -3354,8 +3604,14 @@ function nextActionForStatus(status, lead) {
   return lead.nextAction || lead.next_best_action || "Review lead";
 }
 
-const COOKIE_NAME = "ady_session";
-const SESSION_EXPIRY_SECONDS = 7 * 24 * 3600;
+function authorised(req, config) {
+  if (!config.adminUsername || !config.adminPassword) return true;
+  return verifySession(req.headers.cookie || "", config);
+}
+
+function authChallenge(res, next = "/today") {
+  redirect(res, `/login?next=${encodeURIComponent(next || "/today")}`);
+}
 
 function sessionSecret(config) {
   return config.adminPassword || "no-auth";
@@ -3369,12 +3625,7 @@ function signSession(username, secret) {
 
 function verifySession(cookieHeader, config) {
   if (!config.adminUsername || !config.adminPassword) return true;
-  const cookies = {};
-  for (const part of String(cookieHeader || "").split(";")) {
-    const eq = part.indexOf("=");
-    if (eq > 0) cookies[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
-  }
-  const token = cookies[COOKIE_NAME];
+  const token = parseCookies(cookieHeader)[COOKIE_NAME];
   if (!token) return false;
   const dot = token.lastIndexOf(".");
   if (dot === -1) return false;
@@ -3392,6 +3643,15 @@ function verifySession(cookieHeader, config) {
   }
 }
 
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  for (const part of String(cookieHeader || "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq > 0) cookies[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+  }
+  return cookies;
+}
+
 function timingSafeStrEqual(a, b) {
   const bufA = Buffer.from(String(a));
   const bufB = Buffer.from(String(b));
@@ -3399,51 +3659,36 @@ function timingSafeStrEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-function authorised(req, config) {
-  return verifySession(req.headers.cookie, config);
-}
-
-function authChallenge(res, url) {
-  const next = url ? `?next=${encodeURIComponent(url.pathname + (url.search || ""))}` : "";
-  res.writeHead(303, { location: `/login${next}` });
-  res.end();
-}
-
-function loginPage(url) {
-  const next = escapeAttr(url.searchParams.get("next") || "/today");
-  const error = url.searchParams.get("error");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Sign in — Autodoors Yorkshire</title><style>*{box-sizing:border-box}body{font-family:Inter,Arial,sans-serif;margin:0;min-height:100svh;background:#0f172a;display:grid;place-items:center;padding:20px 16px}.card{background:#fff;border-radius:14px;padding:32px;width:100%;max-width:380px;box-shadow:0 24px 64px rgba(0,0,0,.4)}.brand{display:flex;align-items:center;gap:12px;margin:0 0 28px}.icon{width:44px;height:44px;background:#14b8a6;border-radius:10px;display:grid;place-items:center;color:#062a26;font-weight:900;font-size:17px;flex-shrink:0}.brand-text strong{display:block;color:#111827}.brand-text small{display:block;font-size:13px;color:#667085}label{display:block;margin:0 0 14px}label span{display:block;font-size:11px;font-weight:900;text-transform:uppercase;color:#667085;margin:0 0 5px;letter-spacing:.06em}input[type=text],input[type=password]{width:100%;padding:11px 13px;border:1px solid #d0d5dd;border-radius:8px;font-size:16px;outline:none;-webkit-appearance:none}input:focus{border-color:#14b8a6;box-shadow:0 0 0 3px rgba(20,184,166,.15)}button{width:100%;padding:13px;background:#0f172a;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:800;cursor:pointer;margin-top:8px}button:hover{background:#1e293b}.error{background:#fee2e2;color:#991b1b;border-radius:8px;padding:10px 13px;font-size:14px;margin:0 0 18px}@media(max-width:440px){.card{padding:24px 20px}}</style></head><body><div class="card"><div class="brand"><div class="icon">ADY</div><div class="brand-text"><strong>Autodoors Yorkshire</strong><small>Trade operating dashboard</small></div></div>${error ? `<p class="error">${escapeHtml(error === "wrong" ? "Incorrect username or password." : "Please sign in to continue.")}</p>` : ""}<form method="post" action="/login"><input type="hidden" name="next" value="${next}"><label><span>Username</span><input type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label><label><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label><button type="submit">Sign in</button></form></div></body></html>`;
-}
-
 async function handleLogin(req, res, config) {
   const form = await readForm(req);
-  const username = String(form.username || "").trim();
+  const username = String(form.username || "");
   const password = String(form.password || "");
-  const rawNext = String(form.next || "/today");
-  const safeNext = /^\/[a-zA-Z0-9/?=&%_.#-]*$/.test(rawNext) ? rawNext : "/today";
-
-  if (!config.adminUsername || !config.adminPassword) {
-    return redirect(res, safeNext);
-  }
-
-  const userOk = timingSafeStrEqual(username, config.adminUsername);
-  const passOk = timingSafeStrEqual(password, config.adminPassword);
-  if (!userOk || !passOk) {
-    res.writeHead(303, { location: `/login?error=wrong&next=${encodeURIComponent(safeNext)}` });
-    return res.end();
-  }
-
-  const token = signSession(username, sessionSecret(config));
-  const secure = req.headers["x-forwarded-proto"] === "https" || req.headers["x-forwarded-ssl"] === "on";
-  const cookieParts = [`${COOKIE_NAME}=${token}`, "HttpOnly", "SameSite=Lax", "Path=/", `Max-Age=${SESSION_EXPIRY_SECONDS}`];
-  if (secure) cookieParts.push("Secure");
-  res.writeHead(303, { location: safeNext, "set-cookie": cookieParts.join("; ") });
+  const next = safeNextPath(form.next || "/today");
+  const valid = timingSafeStrEqual(username, config.adminUsername || "") && timingSafeStrEqual(password, config.adminPassword || "");
+  if (!valid) return html(res, loginPage(next, "Login failed. Check the username and password."), 401);
+  const token = signSession(config.adminUsername, sessionSecret(config));
+  res.writeHead(303, {
+    location: next,
+    "set-cookie": `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_EXPIRY_SECONDS}`
+  });
   res.end();
 }
 
 function handleLogout(res) {
-  res.writeHead(303, { location: "/login", "set-cookie": `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` });
+  res.writeHead(303, {
+    location: "/login",
+    "set-cookie": `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`
+  });
   res.end();
+}
+
+function safeNextPath(value) {
+  const next = String(value || "/today");
+  return next.startsWith("/") && !next.startsWith("//") ? next : "/today";
+}
+
+function loginPage(next = "/today", error = "") {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in</title><style>${appStyles()}</style></head><body class="login-screen"><main class="login-wrap"><section class="login-card"><div class="brand-mark"><strong>ADY</strong><span>Autodoors Yorkshire</span></div><h1>Sign in</h1><p class="page-subtitle">Use the dashboard login details to access live customer and finance data.</p>${error ? `<p class="warning-card red">${escapeHtml(error)}</p>` : ""}<form method="post" action="/login" class="stacked-form"><input type="hidden" name="next" value="${escapeAttr(safeNextPath(next))}"><label><span>Username</span><input name="username" autocomplete="username" required autofocus></label><label><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form></section></main></body></html>`;
 }
 
 async function readForm(req) {
@@ -3476,21 +3721,6 @@ function html(res, content, status = 200) {
   res.end(content);
 }
 
-function manifest(res) {
-  res.writeHead(200, { "content-type": "application/manifest+json; charset=utf-8" });
-  res.end(JSON.stringify(PWA_MANIFEST));
-}
-
-function javascript(res, content) {
-  res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
-  res.end(content);
-}
-
-function svg(res, content) {
-  res.writeHead(200, { "content-type": "image/svg+xml; charset=utf-8" });
-  res.end(content);
-}
-
 function json(res, status, content) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(content));
@@ -3499,12 +3729,6 @@ function json(res, status, content) {
 function redirect(res, location) {
   res.writeHead(303, { location });
   res.end();
-}
-
-function appIconSvg(size) {
-  const scale = size / 192;
-  const n = (value) => Math.round(value * scale * 100) / 100;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="Autodoors Yorkshire icon"><rect width="${size}" height="${size}" rx="${n(38)}" fill="#0f172a"/><rect x="${n(36)}" y="${n(26)}" width="${n(120)}" height="${n(13)}" rx="${n(6)}" fill="#14b8a6"/><rect x="${n(42)}" y="${n(52)}" width="${n(108)}" height="${n(70)}" rx="${n(8)}" fill="#ffffff"/><path d="M${n(42)} ${n(69)}h${n(108)}M${n(42)} ${n(86)}h${n(108)}M${n(42)} ${n(103)}h${n(108)}" stroke="#0f172a" stroke-width="${n(5)}" stroke-linecap="round"/><text x="${n(96)}" y="${n(156)}" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="${n(35)}" font-weight="900" text-anchor="middle" letter-spacing="${n(1)}">ADY</text></svg>`;
 }
 
 function badge(value) {

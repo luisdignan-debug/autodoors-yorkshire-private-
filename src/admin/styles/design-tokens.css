@@ -1,0 +1,186 @@
+/* ============================================================
+   AUTODOORS YORKSHIRE — DESIGN TOKENS
+   Single source of truth. Loaded first into the page <style>.
+   All component styles reference these variables.
+   ============================================================ */
+
+:root {
+  /* ── Surfaces ── */
+  --ay-surface-page:     #F5F4F1;   /* page background */
+  --ay-surface-card:     #FFFFFF;   /* card / panel background */
+  --ay-surface-subtle:   #F9F8F6;   /* slightly raised surface */
+  --ay-surface-muted:    #EFEEEA;   /* input backgrounds, inset areas */
+  --ay-surface-overlay:  rgba(0, 0, 0, 0.42); /* modal backdrop */
+
+  /* ── Borders ── */
+  --ay-border-subtle:    rgba(0, 0, 0, 0.06);
+  --ay-border:           rgba(0, 0, 0, 0.10);
+  --ay-border-strong:    rgba(0, 0, 0, 0.16);
+  --ay-border-focus:     rgba(21, 66, 107, 0.55);
+
+  /* ── Brand (Autodoors Yorkshire — deep blue + amber) ── */
+  --ay-brand:            #15426B;   /* primary brand blue */
+  --ay-brand-hover:      #1B4F7E;
+  --ay-brand-active:     #0F3252;
+  --ay-brand-soft:       #E7EEF5;   /* tinted brand surface */
+  --ay-accent:           #D97706;   /* amber highlight */
+
+  /* ── Text ── */
+  --ay-text-primary:     #1A2230;   /* ink navy */
+  --ay-text-secondary:   #5A6472;
+  --ay-text-tertiary:    #97A0AD;
+  --ay-text-inverse:     #FFFFFF;
+  --ay-text-link:        #1B6FB8;
+
+  /* ── Status — Red (urgent / overdue / at risk) ── */
+  --ay-red-text:         #991B1B;
+  --ay-red-bg:           #FEF2F2;
+  --ay-red-border:       rgba(153, 27, 27, 0.18);
+  --ay-red-dot:          #DC2626;
+
+  /* ── Status — Amber (attention / chase needed) ── */
+  --ay-amber-text:       #78350F;
+  --ay-amber-bg:         #FFFBEB;
+  --ay-amber-border:     rgba(120, 53, 15, 0.18);
+  --ay-amber-dot:        #D97706;
+
+  /* ── Status — Green (complete / paid / safe) ── */
+  --ay-green-text:       #14532D;
+  --ay-green-bg:         #F0FDF4;
+  --ay-green-border:     rgba(20, 83, 45, 0.18);
+  --ay-green-dot:        #16A34A;
+
+  /* ── Status — Blue (in progress / awaiting / info) ── */
+  --ay-blue-text:        #1E3A8A;
+  --ay-blue-bg:          #EFF6FF;
+  --ay-blue-border:      rgba(30, 58, 138, 0.18);
+  --ay-blue-dot:         #2563EB;
+
+  /* ── Status — Gray (closed / archived / disabled) ── */
+  --ay-gray-text:        #44403C;
+  --ay-gray-bg:          #F5F5F4;
+  --ay-gray-border:      rgba(68, 64, 60, 0.18);
+  --ay-gray-dot:         #78716C;
+
+  /* ── Primary action ── */
+  --ay-action-bg:        var(--ay-brand);
+  --ay-action-text:      #FFFFFF;
+  --ay-action-bg-hover:  var(--ay-brand-hover);
+  --ay-action-bg-active: var(--ay-brand-active);
+
+  /* ── Danger action ── */
+  --ay-danger-bg:        #FEF2F2;
+  --ay-danger-text:      #991B1B;
+  --ay-danger-border:    rgba(153, 27, 27, 0.25);
+
+  /* ── Navigation ── */
+  --ay-nav-bg:           #F0EEE9;
+  --ay-nav-width:        228px;
+  --ay-nav-item-text:    #545E6B;
+  --ay-nav-item-hover:   rgba(21, 66, 107, 0.07);
+  --ay-nav-item-active-bg:   var(--ay-brand);
+  --ay-nav-item-active-text: #FFFFFF;
+  --ay-nav-badge-bg:     #DC2626;
+  --ay-nav-badge-text:   #FFFFFF;
+
+  /* ── Spacing scale ── */
+  --ay-space-1:   4px;
+  --ay-space-2:   8px;
+  --ay-space-3:   12px;
+  --ay-space-4:   16px;
+  --ay-space-5:   20px;
+  --ay-space-6:   24px;
+  --ay-space-8:   32px;
+  --ay-space-10:  40px;
+  --ay-space-12:  48px;
+  --ay-space-16:  64px;
+
+  /* ── Radius ── */
+  --ay-radius-sm:   6px;
+  --ay-radius-md:   10px;
+  --ay-radius-lg:   16px;
+  --ay-radius-xl:   22px;
+  --ay-radius-full: 9999px;
+
+  /* ── Typography ── */
+  --ay-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+                  "Helvetica Neue", Arial, sans-serif;
+  --ay-font-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+
+  /* ── Shadows ── */
+  --ay-shadow-sm:  0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --ay-shadow-md:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --ay-shadow-lg:  0 12px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.06);
+
+  /* ── Transitions ── */
+  --ay-transition-fast: 100ms ease;
+  --ay-transition-base: 150ms ease;
+  --ay-transition-slow: 250ms cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* ── Bottom nav height (for page padding on mobile) ── */
+  --ay-bottom-nav-height: 64px;
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ay-surface-page:    #111110;
+    --ay-surface-card:    #1C1B1A;
+    --ay-surface-subtle:  #232220;
+    --ay-surface-muted:   #2A2926;
+    --ay-surface-overlay: rgba(0, 0, 0, 0.65);
+
+    --ay-border-subtle:   rgba(255, 255, 255, 0.06);
+    --ay-border:          rgba(255, 255, 255, 0.10);
+    --ay-border-strong:   rgba(255, 255, 255, 0.18);
+    --ay-border-focus:    rgba(255, 255, 255, 0.65);
+
+    --ay-brand:           #4B93C9;
+    --ay-brand-hover:     #5BA0D4;
+    --ay-brand-active:    #3E83B8;
+    --ay-brand-soft:      #13202E;
+    --ay-accent:          #FBBF24;
+
+    --ay-text-primary:    #EBEEF2;
+    --ay-text-secondary:  #9AA3AF;
+    --ay-text-tertiary:   #69727E;
+    --ay-text-inverse:    #0B1B2B;
+    --ay-text-link:       #8EC0EA;
+
+    --ay-red-text:        #FCA5A5;
+    --ay-red-bg:          #2D0C0C;
+    --ay-red-border:      rgba(252, 165, 165, 0.15);
+    --ay-red-dot:         #F87171;
+
+    --ay-amber-text:      #FCD34D;
+    --ay-amber-bg:        #2D1B00;
+    --ay-amber-border:    rgba(252, 211, 77, 0.15);
+    --ay-amber-dot:       #FBBF24;
+
+    --ay-green-text:      #86EFAC;
+    --ay-green-bg:        #052E16;
+    --ay-green-border:    rgba(134, 239, 172, 0.15);
+    --ay-green-dot:       #4ADE80;
+
+    --ay-blue-text:       #93C5FD;
+    --ay-blue-bg:         #0C1B4A;
+    --ay-blue-border:     rgba(147, 197, 253, 0.15);
+    --ay-blue-dot:        #60A5FA;
+
+    --ay-gray-text:       #A8A29E;
+    --ay-gray-bg:         #1C1B1A;
+    --ay-gray-border:     rgba(168, 162, 158, 0.15);
+    --ay-gray-dot:        #78716C;
+
+    --ay-action-bg:       var(--ay-brand);
+    --ay-action-text:     #07131F;
+    --ay-action-bg-hover: var(--ay-brand-hover);
+    --ay-action-bg-active:var(--ay-brand-active);
+
+    --ay-nav-bg:          #0B141D;
+    --ay-nav-item-text:   #9AA3AF;
+    --ay-nav-item-hover:  rgba(255, 255, 255, 0.06);
+    --ay-nav-item-active-bg:   var(--ay-brand);
+    --ay-nav-item-active-text: #07131F;
+  }
+}

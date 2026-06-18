@@ -98,10 +98,10 @@ test("admin dashboard serves health and creates manual lead", async () => {
     assert.match(detail.body, /Customer details/);
     assert.match(detail.body, /Installation completed/);
     assert.match(detail.body, /Closed/);
-    // Mobile features present
-    assert.match(detail.body, /lead-header-strip/);
-    assert.match(detail.body, /contact-strip/);
-    assert.match(detail.body, /primary-action-panel/);
+    // ay- design system lead detail chrome present
+    assert.match(detail.body, /ay-back-link/);
+    assert.match(detail.body, /ay-page-title/);
+    assert.match(detail.body, /ay-next-action/);
 
     const editedLeadDetails = await request({
       port,
