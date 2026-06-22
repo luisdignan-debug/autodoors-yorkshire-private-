@@ -448,6 +448,10 @@ test("work order notify route records dispatch intent without sending messages",
   const config = loadConfig({
     APP_PORT: "0",
     DRY_RUN: "false",
+    TECH_NOTIFY_EMAIL_ENABLED: "false",
+    TECH_NOTIFY_SMS_ENABLED: "false",
+    TECH_NOTIFY_WHATSAPP_ENABLED: "false",
+    TECH_NOTIFY_AUTO_SEND: "false",
     ADMIN_USERNAME: "admin",
     ADMIN_PASSWORD: "password",
     DATABASE_PATH: path.join(dir, "db.json"),
@@ -484,6 +488,41 @@ test("work order notify route records dispatch intent without sending messages",
     assert.ok(store.state.workOrders[0].last_digest_sent_at);
     assert.equal(store.state.workOrders[0].logs.at(-1).event_type, "technician_notified");
     assert.equal(store.state.messageLogs.length, 0);
+
+    const detail = await request({
+      port,
+      path: "/work-orders/work-order-route-1",
+      cookie: sessionCookie
+    });
+    assert.equal(detail.statusCode, 200);
+    assert.match(detail.body, /Notifications/);
+    assert.match(detail.body, /Email|SMS/);
+    assert.match(detail.body, /Disabled|Queued/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("system page shows calendar and notification readiness", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "admin-system-"));
+  const config = loadConfig({
+    APP_PORT: "0",
+    DRY_RUN: "false",
+    ADMIN_USERNAME: "admin",
+    ADMIN_PASSWORD: "password",
+    DATABASE_PATH: path.join(dir, "db.json"),
+    TRACKER_XLSX_PATH: path.join(dir, "tracker.xlsx")
+  });
+  const store = new JsonStore(config.databasePath);
+  const logger = { error() {}, warn() {}, info() {} };
+  const server = startAppServer({ config, store, logger });
+  try {
+    const { port } = server.address();
+    const sessionCookie = await getSessionCookie(port, "admin", "password");
+    const system = await request({ port, path: "/system", cookie: sessionCookie });
+    assert.equal(system.statusCode, 200);
+    assert.match(system.body, /Calendar &amp; notifications|Calendar & notifications/);
+    assert.match(system.body, /Automatic sending/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

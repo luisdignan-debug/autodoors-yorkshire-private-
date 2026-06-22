@@ -117,6 +117,27 @@ const STATUSES = [
 
 const COOKIE_NAME = "ady_session";
 const SESSION_EXPIRY_SECONDS = 7 * 24 * 3600;
+const MESSAGE_STATUS_BADGE_TONES = {
+  sent: "green",
+  failed: "red",
+  queued: "blue",
+  awaiting_approval: "amber",
+  draft: "gray",
+  disabled: "gray",
+  cancelled: "gray"
+};
+const MESSAGE_CHANNEL_LABELS = {
+  email: "Email",
+  sms: "SMS",
+  whatsapp: "WhatsApp"
+};
+const TECH_NOTIFICATION_TEMPLATE_LABELS = {
+  new_assignment: "New job assigned",
+  reminder: "Reminder",
+  reschedule: "Schedule change",
+  cancellation: "Cancellation",
+  urgent_issue: "Urgent issue"
+};
 
 function startAppServer({ config, store, logger }) {
   const server = http.createServer(async (req, res) => {
@@ -1091,6 +1112,7 @@ function statusPage(config, store) {
 function systemPage(config, store) {
   const checks = permanenceChecks(config, store);
   const readiness = integrationReadiness(config, store);
+  const calendarAndNotifications = calendarNotificationChecks(config, store);
   return pageShell(
     "System",
     `<section class="page-intro"><div><h2>Production safety</h2><p>Storage, exports and configuration checks before using live technician data.</p></div><div class="actions"><a class="button secondary" href="/status">Operating status</a><a class="button" href="/export/tracker">Export workbook</a></div></section>
@@ -1106,6 +1128,7 @@ function systemPage(config, store) {
       <a class="button secondary" href="/export/tracker">Workbook</a>
     </div></section>
     <section class="panel"><h2>Plain-English warnings</h2>${supportWarnings(config, store)}</section>
+    <section class="panel"><h2>Calendar &amp; notifications</h2><section class="metrics status-grid">${calendarAndNotifications.map(statusCard).join("")}</section></section>
     <details class="drawer"><summary>Show technical details and data permanence audit</summary><div class="drawer-body"><section class="panel"><h2>Data permanence audit</h2><section class="metrics status-grid">${checks.map(statusCard).join("")}</section></section><section class="panel"><h2>Integration readiness</h2><section class="metrics status-grid">${readiness.map(statusCard).join("")}</section></section>
     <section class="split">
       <article><h2>Storage answers</h2>
@@ -1532,6 +1555,55 @@ function supplierInvoiceFilter(invoice, filter) {
 
 function statusCard(check) {
   return `<div class="status-card ${escapeAttr(check.tone)}"><span>${escapeHtml(check.label)}</span><strong>${escapeHtml(check.value)}</strong><small>${escapeHtml(check.detail)}</small></div>`;
+}
+
+function calendarNotificationChecks(config, store) {
+  const calendar = calendarReadiness(config);
+  const notificationStatus = messagingStatus(config);
+  const techNotify = config.techNotify || {};
+  const failedMessage = (store.state.messageQueue || [])
+    .filter((message) => message.status === "failed")
+    .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")))[0];
+  const calendarValues = {
+    ready: { value: "Active", tone: "green" },
+    disabled: { value: "ICS download only", tone: "green" },
+    warning: { value: "Check CalDAV", tone: "amber" }
+  };
+  const calendarCard = calendarValues[calendar.status] || calendarValues.warning;
+
+  return [
+    { label: "Installation calendar", value: calendarCard.value, tone: calendarCard.tone, detail: calendar.warning || "" },
+    { label: "Technician portal", value: "Not set up yet", tone: "amber", detail: "Secure technician access is planned (Phase 3)." },
+    notificationChannelCheck("Email notifications", "email", notificationStatus.email, techNotify.emailEnabled),
+    notificationChannelCheck("SMS notifications", "SMS", notificationStatus.sms, techNotify.smsEnabled),
+    notificationChannelCheck("WhatsApp notifications", "WhatsApp", notificationStatus.whatsapp, techNotify.whatsappEnabled),
+    techNotify.autoSend
+      ? { label: "Automatic sending", value: "ON", tone: "amber", detail: "Auto-send is enabled — verify before relying on it." }
+      : { label: "Automatic sending", value: "Off", tone: "green", detail: "Safe: nothing sends without manual action." },
+    techNotify.dryRun
+      ? { label: "Dry run", value: "On", tone: "green", detail: "Messages are simulated, not sent." }
+      : { label: "Dry run", value: "Off", tone: "amber", detail: "Dry-run disabled." },
+    failedMessage
+      ? { label: "Last notification error", value: truncateText(failedMessage.error || "No error recorded", 90), tone: "red", detail: dateTimeLabel(failedMessage.updated_at || failedMessage.created_at) }
+      : { label: "Last notification error", value: "None", tone: "green", detail: "" },
+    { label: "Email classifier", value: "Rule-based", tone: "green", detail: "Deterministic rules; AI classifier disabled." }
+  ];
+}
+
+function notificationChannelCheck(label, channelName, status = {}, enabled) {
+  if (!enabled) {
+    return { label, value: "Off (draft only)", tone: "green", detail: `Technician ${channelName} sending is disabled.` };
+  }
+  if (!status.configured) {
+    return { label, value: "Enabled, not configured", tone: "amber", detail: `Technician ${channelName} sending is enabled but provider credentials are incomplete.` };
+  }
+  return { label, value: "Enabled", tone: "amber", detail: `Technician ${channelName} provider is configured; verify before relying on live sending.` };
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value || "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function latestActivity(state) {
@@ -2273,6 +2345,7 @@ function workOrderDetailPage(order, config, store) {
         ${ayButton({ label: "Add note", type: "submit", variant: "secondary" })}
       </form>
     </section>
+    ${workOrderNotificationsSection(order, config, store)}
     <details class="panel">
       <summary>Advanced</summary>
       <section class="split" style="margin-top:var(--ay-space-4)">
@@ -2789,6 +2862,38 @@ function workOrderPostButton(orderId, action, label, variant = "primary") {
 function workOrderActivityList(logs = []) {
   if (!logs.length) return `<p class="muted">No activity yet.</p>`;
   return `<ul style="margin:0;padding-left:var(--ay-space-5);color:var(--ay-text-secondary);font-size:13px">${logs.map((log) => `<li>${escapeHtml([dateTimeLabel(log.created_at), plainStatusLabel(log.event_type), log.note].filter(Boolean).join(" - "))}</li>`).join("")}</ul>`;
+}
+
+function workOrderNotificationsSection(order, config, store) {
+  const techNotify = config.techNotify || {};
+  const showDraftOnlyNote = (!techNotify.emailEnabled && !techNotify.smsEnabled && !techNotify.whatsappEnabled) || !techNotify.autoSend;
+  const notifications = (store.state.messageQueue || [])
+    .filter((message) => message.related_type === "work_order" && message.related_id === order.id)
+    .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
+
+  return `<section class="panel">
+    <h2>Notifications</h2>
+    ${showDraftOnlyNote ? `<p class="muted">Sending is off by default — these are queued records, not live messages.</p>` : ""}
+    ${notifications.length ? `<div style="display:flex;flex-direction:column;gap:var(--ay-space-2)">
+      ${notifications.map(workOrderNotificationRow).join("")}
+    </div>` : `<p class="muted">No technician notifications yet. Use Notify technician to queue one.</p>`}
+  </section>`;
+}
+
+function workOrderNotificationRow(message) {
+  const channel = MESSAGE_CHANNEL_LABELS[message.channel] || plainStatusLabel(message.channel || "notification");
+  const status = message.status || "draft";
+  const template = TECH_NOTIFICATION_TEMPLATE_LABELS[message.template_type] || plainStatusLabel(message.template_type || "Notification");
+  const when = dateTimeLabel(message.updated_at || message.created_at);
+  return `<div class="ay-detail-card__row">
+    <span class="ay-detail-card__row-label">${escapeHtml(channel)}</span>
+    <span class="ay-detail-card__row-value" style="display:flex;justify-content:flex-end;align-items:center;gap:var(--ay-space-2);flex-wrap:wrap">
+      ${ayBadge({ variant: MESSAGE_STATUS_BADGE_TONES[status] || "gray", label: statusLabel(status) })}
+      <span>${escapeHtml(template)}</span>
+      <span class="muted">${escapeHtml(when)}</span>
+      ${message.error ? `<span style="color:var(--ay-red-text)">${escapeHtml(message.error)}</span>` : ""}
+    </span>
+  </div>`;
 }
 
 function detailRow(label, value) {
