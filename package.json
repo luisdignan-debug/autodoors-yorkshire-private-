@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js app",
     "dev": "node src/index.js app",
-    "build": "node --check src/index.js && node --check src/admin/appServer.js && node --check src/financialCalculations.js && node --check src/supplierInvoiceCalculations.js && node --check src/customerInvoices.js && node --check src/schedule.js && node --check src/messageProvider.js",
+    "build": "node --check src/index.js && node --check src/admin/appServer.js && node --check src/financialCalculations.js && node --check src/supplierInvoiceCalculations.js && node --check src/customerInvoices.js && node --check src/schedule.js && node --check src/messageProvider.js && node --check src/messageQueue.js",
     "db:migrate": "node src/index.js db-migrate",
     "test": "node --test tests/*.test.js",
     "test-mode": "node src/index.js test-mode",

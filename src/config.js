@@ -116,6 +116,11 @@ const DEFAULTS = {
   SEND_EMAILS_ENABLED: "false",
   SEND_SMS_ENABLED: "false",
   SEND_WHATSAPP_ENABLED: "false",
+  TECH_NOTIFY_EMAIL_ENABLED: "false",
+  TECH_NOTIFY_SMS_ENABLED: "false",
+  TECH_NOTIFY_WHATSAPP_ENABLED: "false",
+  TECH_NOTIFY_AUTO_SEND: "false",
+  TECH_NOTIFY_DRY_RUN: "true",
   CALENDAR_SYNC_ENABLED: "false",
   TWILIO_ACCOUNT_SID: "",
   TWILIO_AUTH_TOKEN: "",
@@ -218,6 +223,13 @@ function loadConfig(overrides = {}) {
     sendEmailsEnabled: bool(merged.SEND_EMAILS_ENABLED),
     sendSmsEnabled: bool(merged.SEND_SMS_ENABLED),
     sendWhatsappEnabled: bool(merged.SEND_WHATSAPP_ENABLED),
+    techNotify: {
+      emailEnabled: bool(merged.TECH_NOTIFY_EMAIL_ENABLED),
+      smsEnabled: bool(merged.TECH_NOTIFY_SMS_ENABLED),
+      whatsappEnabled: bool(merged.TECH_NOTIFY_WHATSAPP_ENABLED),
+      autoSend: bool(merged.TECH_NOTIFY_AUTO_SEND),
+      dryRun: merged.TECH_NOTIFY_DRY_RUN === undefined ? true : bool(merged.TECH_NOTIFY_DRY_RUN)
+    },
     calendarSyncEnabled: bool(merged.CALENDAR_SYNC_ENABLED),
     twilio: {
       accountSid: merged.TWILIO_ACCOUNT_SID,

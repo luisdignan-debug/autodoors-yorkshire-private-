@@ -223,26 +223,38 @@ function workOrderCalendarPayload(workOrder, appBaseUrl = "") {
   };
 }
 
-function generateIcs(workOrder, appBaseUrl = "") {
+function generateIcs(workOrder, appBaseUrl = "", { method = "PUBLISH", sequence } = {}) {
   const event = workOrderCalendarPayload(workOrder, appBaseUrl);
-  return [
+  const calendarMethod = String(method || "PUBLISH").toUpperCase();
+  const eventLines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Autodoors Yorkshire//Dashboard//EN",
     "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
+    `METHOD:${calendarMethod}`,
     "BEGIN:VEVENT",
-    `UID:${icsEscape(event.uid)}`,
+    `UID:${icsEscape(workOrder.calendar_uid || `${workOrder.id}@autodoorsyorkshire.com`)}`,
+    `SEQUENCE:${sequence != null ? sequence : (workOrder.calendar_sequence || 0)}`,
     `DTSTAMP:${icsDate(new Date())}`,
     `DTSTART:${icsDate(event.start || new Date())}`,
     `DTEND:${icsDate(event.end || defaultEnd(event.start))}`,
     `SUMMARY:${icsEscape(event.title)}`,
     `LOCATION:${icsEscape(event.location)}`,
-    `DESCRIPTION:${icsEscape(event.description)}`,
+    `DESCRIPTION:${icsEscape(event.description)}`
+  ];
+  if (calendarMethod === "CANCEL") eventLines.push("STATUS:CANCELLED");
+  return [
+    ...eventLines,
     "END:VEVENT",
     "END:VCALENDAR",
     ""
   ].join("\r\n");
+}
+
+function incrementCalendarSequence(workOrder) {
+  workOrder.calendar_sequence = (workOrder.calendar_sequence || 0) + 1;
+  workOrder.updated_at = new Date().toISOString();
+  return workOrder;
 }
 
 function markWorkOrderSent(workOrder) {
@@ -366,6 +378,7 @@ module.exports = {
   digestForTechnician,
   workOrderCalendarPayload,
   generateIcs,
+  incrementCalendarSequence,
   markWorkOrderSent,
   markWorkOrderComplete,
   calendarReadiness,

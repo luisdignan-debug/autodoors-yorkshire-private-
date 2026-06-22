@@ -7,6 +7,7 @@ const {
   digestForTechnician,
   workOrderCalendarPayload,
   generateIcs,
+  incrementCalendarSequence,
   scheduleSummary,
   appendEventLog,
   dispatchState,
@@ -55,6 +56,34 @@ test("work order calendar event payload and .ics export are generated", () => {
   assert.match(payload.location, /12 Market Street/);
   assert.match(ics, /BEGIN:VCALENDAR/);
   assert.match(ics, /SUMMARY:Auto Doors Yorkshire/);
+  assert.match(ics, /UID:WO-1@autodoorsyorkshire\.com/);
+  assert.match(ics, /SEQUENCE:0/);
+  assert.match(ics, /METHOD:PUBLISH/);
+});
+
+test("work order .ics export supports cancellation method and sequence", () => {
+  const order = createWorkOrder({
+    id: "WO-CANCEL",
+    scheduled_start: "2026-06-06T09:00",
+    scheduled_end: "2026-06-06T10:30",
+    customer_name: "Jane Smith"
+  });
+
+  const ics = generateIcs(order, "https://example.com", { method: "CANCEL", sequence: 2 });
+
+  assert.match(ics, /METHOD:CANCEL/);
+  assert.match(ics, /SEQUENCE:2/);
+  assert.match(ics, /STATUS:CANCELLED/);
+});
+
+test("incrementCalendarSequence bumps sequence and updates timestamp", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-06-06T12:00:00.000Z") });
+  const order = createWorkOrder({ id: "WO-SEQUENCE" });
+
+  incrementCalendarSequence(order);
+
+  assert.equal(order.calendar_sequence, 1);
+  assert.equal(order.updated_at, "2026-06-06T12:00:00.000Z");
 });
 
 test("SMS and WhatsApp providers are disabled by default", async () => {
@@ -81,6 +110,22 @@ test("calendar sync defaults to safe .ics mode", () => {
   assert.equal(summary.today, 1);
   assert.equal(readiness.status, "disabled");
   assert.match(readiness.warning, /\.ics/);
+});
+
+test("technician notification config defaults are disabled and dry-run", () => {
+  const config = loadConfig({
+    TECH_NOTIFY_EMAIL_ENABLED: undefined,
+    TECH_NOTIFY_SMS_ENABLED: undefined,
+    TECH_NOTIFY_WHATSAPP_ENABLED: undefined,
+    TECH_NOTIFY_AUTO_SEND: undefined,
+    TECH_NOTIFY_DRY_RUN: undefined
+  });
+
+  assert.equal(config.techNotify.emailEnabled, false);
+  assert.equal(config.techNotify.smsEnabled, false);
+  assert.equal(config.techNotify.whatsappEnabled, false);
+  assert.equal(config.techNotify.autoSend, false);
+  assert.equal(config.techNotify.dryRun, true);
 });
 
 test("work order creation includes dispatch defaults", () => {

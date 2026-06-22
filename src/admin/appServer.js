@@ -85,12 +85,14 @@ const {
   scheduleSummary,
   digestForTechnician,
   generateIcs,
+  incrementCalendarSequence,
   markWorkOrderSent,
   markWorkOrderComplete,
   calendarReadiness,
   formatWorkOrderValue
 } = require("../schedule");
 const { messagingStatus, sendSms, sendWhatsApp, whatsappLink } = require("../messageProvider");
+const { ensureMessageQueue, queueTechnicianNotification } = require("../messageQueue");
 
 const STATUSES = [
   "New",
@@ -734,6 +736,7 @@ function workOrderGet(req, res, { config, store }, pathname) {
 
 async function workOrderPost(req, res, { config, store, logger }, pathname) {
   ensureOperationsState(store.state, config);
+  ensureMessageQueue(store.state);
   const order = findWorkOrder(store, pathname);
   if (!order) return redirect(res, "/technician-schedule");
   const action = pathname.split("/").filter(Boolean)[2] || "edit";
@@ -748,9 +751,16 @@ async function workOrderPost(req, res, { config, store, logger }, pathname) {
     order.technician_id = form.technician_id || form.technicianId || "";
     appendEventLog(order, "assigned", `Assigned to ${technicianName(store.state, order.technician_id) || order.technician_id || "Unassigned"}`);
   } else if (action === "notify-technician") {
+    const matchedTechnician = (store.state.technicians || []).find((item) => item.id === order.technician_id) || {};
     order.technician_status = "notified";
     order.last_digest_sent_at = new Date().toISOString();
     appendEventLog(order, "technician_notified", "Technician notification recorded");
+    queueTechnicianNotification(store.state, config, {
+      workOrder: order,
+      technician: matchedTechnician,
+      templateKey: "new_assignment",
+      secureLink: `${config.appBaseUrl || ""}/work-orders/${order.id}`
+    });
   } else if (action === "confirm-technician") {
     order.technician_status = "confirmed";
     order.status = "confirmed";
@@ -769,7 +779,14 @@ async function workOrderPost(req, res, { config, store, logger }, pathname) {
     const oldEnd = order.scheduled_end || "";
     const lead = (store.state.leads || []).find((item) => item.id === order.lead_id || item.id === order.job_id) || {};
     updateWorkOrder(order, { ...form, status: "rescheduled", technician_status: "reschedule_requested" }, lead);
+    incrementCalendarSequence(order);
     appendEventLog(order, "rescheduled", `${oldStart}${oldEnd ? ` to ${oldEnd}` : ""} -> ${order.scheduled_start || "unscheduled"}${order.scheduled_end ? ` to ${order.scheduled_end}` : ""}`);
+    queueTechnicianNotification(store.state, config, {
+      workOrder: order,
+      technician: (store.state.technicians || []).find((item) => item.id === order.technician_id) || {},
+      templateKey: "reschedule",
+      secureLink: `${config.appBaseUrl || ""}/work-orders/${order.id}`
+    });
   } else if (action === "add-log") {
     appendEventLog(order, "note", form.note || "", "office");
   } else if (action === "add-to-calendar") {
@@ -785,7 +802,14 @@ async function workOrderPost(req, res, { config, store, logger }, pathname) {
     }
   } else if (action === "cancel") {
     order.status = "cancelled";
+    incrementCalendarSequence(order);
     appendEventLog(order, "cancelled", "Work order cancelled");
+    queueTechnicianNotification(store.state, config, {
+      workOrder: order,
+      technician: (store.state.technicians || []).find((item) => item.id === order.technician_id) || {},
+      templateKey: "cancellation",
+      secureLink: `${config.appBaseUrl || ""}/work-orders/${order.id}`
+    });
   }
   store.addJobEvent({ leadId: order.lead_id, eventType: `work_order_${action}`, eventNote: formatWorkOrderValue(order), createdBy: "dashboard" });
   await store.save();
