@@ -2148,12 +2148,13 @@ function technicianForm(technician = {}) {
   </form>`;
 }
 
-function workOrderForm(leads, technicians, lead = {}) {
+function workOrderForm(leads, technicians, lead = {}, preselectType = "") {
+  const workTypeDefault = WORK_TYPES.includes(preselectType) ? preselectType : (lead.workflow_type === "repair" ? "repair" : "installation");
   return `<form method="post" action="/work-orders/create" class="stacked-form">
     ${leadSelect(leads, lead.id || "")}
     <div class="field-grid">
       <label><span>Technician</span><select name="technician_id"><option value="">Unassigned</option>${(technicians || []).filter((item) => item.active !== false).map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label>
-      ${selectInput("work_type", WORK_TYPES, lead.workflow_type === "repair" ? "repair" : "installation")}
+      <label><span>Visit type</span>${selectInput("work_type", WORK_TYPES, workTypeDefault)}</label>
       ${labeledInput("scheduled_start", "Scheduled start", lead.installation_scheduled_at || "", "datetime-local")}
       ${labeledInput("scheduled_end", "Scheduled end", "", "datetime-local")}
       ${labeledInput("time_window", "Time window", lead.installation_time_window || "")}
@@ -2467,6 +2468,7 @@ function installationsPage(leads, state = {}, params = new URLSearchParams()) {
   const financeFor = (lead) => customerOutstandingForLead(lead, financeState);
   const buckets = installationTodayBuckets(state, preparedLeads, financeFor);
   const view = ["today", "week", "month", "list", "technician"].includes(params.get("view")) ? params.get("view") : "today";
+  const bookType = WORK_TYPES.includes(params.get("book")) ? params.get("book") : "";
   const allOrders = (state.workOrders || []).slice();
   const activeOrders = allOrders.filter((order) => !["cancelled", "completed"].includes(order.status));
   const nonCancelledOrders = allOrders.filter((order) => order.status !== "cancelled");
@@ -2488,8 +2490,12 @@ function installationsPage(leads, state = {}, params = new URLSearchParams()) {
         <p class="ay-page-subtitle">Book, assign and track installation work</p>
       </div>
       <div class="actions">
-        ${ayButton({ label: "Book installation", href: "#book", variant: "primary", size: "sm" })}
-        ${ayButton({ label: "Add repair visit", href: "#book", variant: "secondary", size: "sm" })}
+        ${ayButton({ label: "Book installation", href: "/installations?book=installation#book", variant: "primary", size: "sm" })}
+        ${ayButton({ label: "Add survey visit", href: "/installations?book=survey#book", variant: "secondary", size: "sm" })}
+        ${ayButton({ label: "Add repair visit", href: "/installations?book=repair#book", variant: "secondary", size: "sm" })}
+        ${ayButton({ label: "Add follow-up visit", href: "/installations?book=follow_up#book", variant: "secondary", size: "sm" })}
+        ${ayButton({ label: "Add service visit", href: "/installations?book=service#book", variant: "secondary", size: "sm" })}
+        ${ayButton({ label: "Other visit", href: "/installations?book=other#book", variant: "secondary", size: "sm" })}
         ${ayButton({ label: "Technician view", href: "/installations?view=technician", variant: "ghost", size: "sm" })}
       </div>
     </section>
@@ -2504,9 +2510,9 @@ function installationsPage(leads, state = {}, params = new URLSearchParams()) {
     ${dispatchFilterForm(params, state)}
     ${view === "technician" ? technicianDispatchBoard(visibleOrders, preparedLeads, state) : dispatchGroupedView(view, visibleOrders, preparedLeads, state)}
     ${needsBookingSection(buckets, preparedLeads)}
-    <details id="book" class="panel">
-      <summary>Book installation / repair visit</summary>
-      <div style="margin-top:var(--ay-space-4)">${workOrderForm(preparedLeads, state.technicians || [], {})}</div>
+    <details id="book" class="panel"${bookType ? " open" : ""}>
+      <summary>Book a visit</summary>
+      <div style="margin-top:var(--ay-space-4)">${workOrderForm(preparedLeads, state.technicians || [], {}, bookType)}</div>
     </details>`
   );
 }
@@ -2585,7 +2591,7 @@ function dispatchFilterForm(params, state) {
     ["balance_due", "Completed - balance due"],
     ["paid", "Completed and paid"]
   ];
-  return `<form method="get" class="filters filter-panel">
+  return `<form method="get" class="ay-filter-bar">
     <input type="hidden" name="view" value="${escapeAttr(view)}">
     ${select("technician", "Technician", technicians, params.get("technician") || "")}
     ${select("state", "Status", states, params.get("state") || "")}

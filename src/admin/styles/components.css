@@ -314,6 +314,53 @@
 /* Badge without dot (for system status cards) */
 .ay-badge--no-dot::before { display: none; }
 
+/* ─── DISPATCH FILTER BAR ─── */
+
+.ay-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ay-space-3);
+  background: var(--ay-surface-card);
+  border: 1px solid var(--ay-border);
+  border-radius: var(--ay-radius-lg);
+  padding: var(--ay-space-4);
+  margin-bottom: var(--ay-space-5);
+}
+
+.ay-filter-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1 1 150px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--ay-text-secondary);
+}
+
+.ay-filter-bar select {
+  width: 100%;
+  margin: 0;
+  padding: 9px var(--ay-space-3);
+  font-size: 14px;
+  color: var(--ay-text-primary);
+  background: var(--ay-surface-muted);
+  border: 1px solid var(--ay-border-strong);
+  border-radius: var(--ay-radius-md);
+}
+
+.ay-filter-bar .button,
+.ay-filter-bar button {
+  align-self: flex-end;
+}
+
+@media (max-width: 768px) {
+  .ay-filter-bar label { flex: 1 1 100%; }
+}
+
 /* ─── BUTTONS ─── */
 
 /* TABLES */
