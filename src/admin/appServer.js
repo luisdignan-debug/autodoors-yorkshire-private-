@@ -77,6 +77,7 @@ const {
   updateTechnician,
   createWorkOrder,
   updateWorkOrder,
+  appendEventLog,
   workOrdersForLead,
   scheduleSummary,
   digestForTechnician,
@@ -729,16 +730,45 @@ function workOrderGet(req, res, { config, store }, pathname) {
 }
 
 async function workOrderPost(req, res, { config, store, logger }, pathname) {
+  ensureOperationsState(store.state, config);
   const order = findWorkOrder(store, pathname);
   if (!order) return redirect(res, "/technician-schedule");
   const action = pathname.split("/").filter(Boolean)[2] || "edit";
-  ensureOperationsState(store.state, config);
+  const form = await readForm(req);
   if (action === "send-to-technician") {
     const technician = (store.state.technicians || []).find((item) => item.id === order.technician_id) || {};
     const digest = digestForTechnician({ ...store.state, workOrders: [order] }, technician.id, order.scheduled_start || new Date(), 1);
     const smsAttempt = await sendSms(technician.mobile_number, digest.body, { config, state: store.state, templateType: "technician_job_assignment" });
     const whatsappAttempt = await sendWhatsApp(technician.whatsapp_number || technician.mobile_number, digest.body, config.whatsappTemplates.jobAssignment, {}, { config, state: store.state, templateType: "technician_job_assignment" });
     if ([smsAttempt.status, whatsappAttempt.status].some((status) => ["queued", "sent"].includes(status))) markWorkOrderSent(order);
+  } else if (action === "assign") {
+    order.technician_id = form.technician_id || form.technicianId || "";
+    appendEventLog(order, "assigned", `Assigned to ${technicianName(store.state, order.technician_id) || order.technician_id || "Unassigned"}`);
+  } else if (action === "notify-technician") {
+    order.technician_status = "notified";
+    order.last_digest_sent_at = new Date().toISOString();
+    appendEventLog(order, "technician_notified", "Technician notification recorded");
+  } else if (action === "confirm-technician") {
+    order.technician_status = "confirmed";
+    order.status = "confirmed";
+    appendEventLog(order, "technician_confirmed", "Technician confirmed the job");
+  } else if (action === "en-route") {
+    order.technician_status = "en_route";
+    appendEventLog(order, "en_route", "Technician is on the way");
+  } else if (action === "arrived") {
+    order.technician_status = "arrived";
+    appendEventLog(order, "arrived", "Technician arrived on site");
+  } else if (action === "confirm-customer") {
+    order.customer_confirmation_status = "confirmed";
+    appendEventLog(order, "customer_confirmed", "Customer confirmed the appointment");
+  } else if (action === "reschedule") {
+    const oldStart = order.scheduled_start || "unscheduled";
+    const oldEnd = order.scheduled_end || "";
+    const lead = (store.state.leads || []).find((item) => item.id === order.lead_id || item.id === order.job_id) || {};
+    updateWorkOrder(order, { ...form, status: "rescheduled", technician_status: "reschedule_requested" }, lead);
+    appendEventLog(order, "rescheduled", `${oldStart}${oldEnd ? ` to ${oldEnd}` : ""} -> ${order.scheduled_start || "unscheduled"}${order.scheduled_end ? ` to ${order.scheduled_end}` : ""}`);
+  } else if (action === "add-log") {
+    appendEventLog(order, "note", form.note || "", "office");
   } else if (action === "add-to-calendar") {
     order.calendar_event_id = order.calendar_event_id || `${order.id}@autodoorsyorkshire.com`;
     order.updated_at = new Date().toISOString();
@@ -752,13 +782,13 @@ async function workOrderPost(req, res, { config, store, logger }, pathname) {
     }
   } else if (action === "cancel") {
     order.status = "cancelled";
-    order.updated_at = new Date().toISOString();
+    appendEventLog(order, "cancelled", "Work order cancelled");
   }
   store.addJobEvent({ leadId: order.lead_id, eventType: `work_order_${action}`, eventNote: formatWorkOrderValue(order), createdBy: "dashboard" });
   await store.save();
   writeTrackerWorkbook(config.trackerXlsxPath, store.state, config);
   logger.info("Work order action applied", { action, workOrderId: order.id });
-  redirect(res, "/technician-schedule");
+  redirect(res, ["assign", "notify-technician", "confirm-technician", "en-route", "arrived", "confirm-customer", "reschedule", "add-log"].includes(action) ? `/work-orders/${encodeURIComponent(order.id)}` : "/technician-schedule");
 }
 
 async function updateSupplierEmail(req, res, { config, store, logger }, pathname) {

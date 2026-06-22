@@ -2,6 +2,9 @@ const { formatMoney } = require("./finance");
 
 const WORK_ORDER_STATUSES = ["unscheduled", "scheduled", "sent_to_technician", "confirmed", "completed", "cancelled", "rescheduled"];
 const WORK_TYPES = ["survey", "repair", "installation", "follow_up", "service", "other"];
+const TECHNICIAN_STATUSES = ["not_notified", "notified", "confirmed", "en_route", "arrived", "completed", "issue", "reschedule_requested"];
+const CUSTOMER_CONFIRMATION_STATUSES = ["not_sent", "awaiting", "confirmed", "declined"];
+const RISK_LEVELS = ["red", "amber", "green", "grey"];
 
 function createTechnician(form = {}) {
   const now = new Date().toISOString();
@@ -37,10 +40,11 @@ function updateTechnician(technician, form = {}) {
 
 function createWorkOrder(form = {}, lead = {}) {
   const now = new Date().toISOString();
+  const id = form.id || `work-order:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
   const scheduledStart = form.scheduled_start || form.scheduledStart || lead.installation_scheduled_at || "";
   const scheduledEnd = form.scheduled_end || form.scheduledEnd || defaultEnd(scheduledStart);
   return {
-    id: form.id || `work-order:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`,
+    id,
     job_id: form.job_id || form.jobId || lead.id || "",
     lead_id: form.lead_id || form.leadId || lead.id || "",
     technician_id: form.technician_id || form.technicianId || "",
@@ -51,12 +55,20 @@ function createWorkOrder(form = {}, lead = {}) {
     address: form.address || lead.customerAddress || "",
     postcode: form.postcode || lead.customerPostcode || "",
     customer_name: form.customer_name || form.customerName || lead.customerName || "",
+    customer_email: form.customer_email || form.customerEmail || lead.customerEmail || "",
     customer_phone: form.customer_phone || form.customerPhone || lead.customerPhone || "",
     job_summary: form.job_summary || form.jobSummary || lead.jobDescription || "",
     access_notes: form.access_notes || form.accessNotes || lead.installation_access_notes || "",
     materials_notes: form.materials_notes || form.materialsNotes || lead.supplier_order_product_details || lead.supplier_order_notes || "",
     supplier_order_reference: form.supplier_order_reference || form.supplierOrderReference || lead.supplier_order_reference || "",
     status: scheduledStart ? "scheduled" : "unscheduled",
+    technician_status: "not_notified",
+    customer_confirmation_status: "not_sent",
+    risk_level: "grey",
+    internal_notes: form.internal_notes || "",
+    calendar_uid: `${id}@autodoorsyorkshire.com`,
+    calendar_sequence: 0,
+    logs: [],
     technician_notes: form.technician_notes || form.technicianNotes || "",
     calendar_event_id: form.calendar_event_id || form.calendarEventId || "",
     last_digest_sent_at: "",
@@ -76,12 +88,20 @@ function updateWorkOrder(workOrder, form = {}, lead = {}) {
     address: form.address || workOrder.address || lead.customerAddress || "",
     postcode: form.postcode || workOrder.postcode || lead.customerPostcode || "",
     customer_name: form.customer_name || form.customerName || workOrder.customer_name || lead.customerName || "",
+    customer_email: form.customer_email || form.customerEmail || workOrder.customer_email || lead.customerEmail || "",
     customer_phone: form.customer_phone || form.customerPhone || workOrder.customer_phone || lead.customerPhone || "",
     job_summary: form.job_summary || form.jobSummary || workOrder.job_summary || lead.jobDescription || "",
     access_notes: form.access_notes || form.accessNotes || workOrder.access_notes || lead.installation_access_notes || "",
     materials_notes: form.materials_notes || form.materialsNotes || workOrder.materials_notes || lead.supplier_order_product_details || "",
     supplier_order_reference: form.supplier_order_reference || form.supplierOrderReference || workOrder.supplier_order_reference || lead.supplier_order_reference || "",
     status: form.status || (scheduledStart ? "scheduled" : "unscheduled"),
+    technician_status: TECHNICIAN_STATUSES.includes(form.technician_status) ? form.technician_status : workOrder.technician_status || "not_notified",
+    customer_confirmation_status: CUSTOMER_CONFIRMATION_STATUSES.includes(form.customer_confirmation_status) ? form.customer_confirmation_status : workOrder.customer_confirmation_status || "not_sent",
+    risk_level: RISK_LEVELS.includes(form.risk_level) ? form.risk_level : workOrder.risk_level || "grey",
+    internal_notes: form.internal_notes || workOrder.internal_notes || "",
+    calendar_uid: workOrder.calendar_uid || `${workOrder.id}@autodoorsyorkshire.com`,
+    calendar_sequence: workOrder.calendar_sequence === undefined ? 0 : workOrder.calendar_sequence,
+    logs: Array.isArray(workOrder.logs) ? workOrder.logs : [],
     technician_notes: form.technician_notes || form.technicianNotes || workOrder.technician_notes || "",
     updated_at: new Date().toISOString()
   });
@@ -100,6 +120,59 @@ function scheduleSummary(state, now = new Date()) {
     thisWeek: active.filter((order) => inNextDays(order.scheduled_start, 7, now)).length,
     unscheduled: active.filter((order) => !order.scheduled_start || order.status === "unscheduled").length,
     digestNotSent: active.filter((order) => inNextDays(order.scheduled_start, 1, now) && !order.last_digest_sent_at).length
+  };
+}
+
+function appendEventLog(workOrder, eventType, note, createdBy = "office") {
+  if (!Array.isArray(workOrder.logs)) workOrder.logs = [];
+  workOrder.logs.push({
+    id: `work-order-log:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`,
+    event_type: eventType,
+    note,
+    created_by: createdBy,
+    created_at: new Date().toISOString()
+  });
+  workOrder.updated_at = new Date().toISOString();
+  return workOrder;
+}
+
+function dispatchState(workOrder = {}, { balanceOutstanding = 0 } = {}) {
+  if (workOrder.status === "cancelled") return { key: "cancelled", label: "Cancelled", tone: "grey" };
+  if (workOrder.status === "completed" && balanceOutstanding > 0) return { key: "balance_due", label: "Completed – balance due", tone: "red" };
+  if (workOrder.status === "completed") return { key: "paid", label: "Completed & paid", tone: "green" };
+  if (workOrder.technician_status === "reschedule_requested" || workOrder.status === "rescheduled") return { key: "reschedule_needed", label: "Reschedule requested", tone: "amber" };
+  if (workOrder.technician_status === "arrived") return { key: "on_site", label: "On site", tone: "blue" };
+  if (workOrder.technician_status === "en_route") return { key: "on_route", label: "On the way", tone: "blue" };
+  if (workOrder.technician_status === "confirmed" || workOrder.status === "confirmed") return { key: "technician_confirmed", label: "Technician confirmed", tone: "green" };
+  if (workOrder.technician_status === "notified") return { key: "awaiting_confirmation", label: "Awaiting technician confirmation", tone: "amber" };
+  if (workOrder.status === "unscheduled" || !workOrder.scheduled_start) return { key: "needs_booking", label: "Needs booking", tone: "amber" };
+  return { key: "booked", label: "Booked – notify technician", tone: "blue" };
+}
+
+function installationTodayBuckets(state = {}, leads = [], financeFor = () => 0, now = new Date()) {
+  const workOrders = state.workOrders || [];
+  const active = workOrders.filter((order) => !["cancelled", "completed"].includes(order.status));
+  const leadById = new Map((leads || []).map((lead) => [lead.id, lead]));
+  const hasActiveWorkOrder = (lead) => active.some((order) => order.lead_id === lead.id || order.job_id === lead.id);
+  const leadForOrder = (order) => leadById.get(order.lead_id) || leadById.get(order.job_id);
+
+  return {
+    installsToday: active.filter((order) => sameDay(order.scheduled_start, now)),
+    installsThisWeek: active.filter((order) => inNextDays(order.scheduled_start, 7, now)),
+    needsBooking: (leads || []).filter((lead) =>
+      lead.quote_accepted_at &&
+      (lead.supplier_order_required !== "yes" || lead.supplier_actual_delivery_date) &&
+      !lead.installation_completed_at &&
+      !hasActiveWorkOrder(lead)
+    ),
+    rescheduleRequested: workOrders.filter((order) => order.technician_status === "reschedule_requested" || order.status === "rescheduled"),
+    completedBalanceDue: workOrders.filter((order) => {
+      const lead = leadForOrder(order);
+      return order.status === "completed" && lead && financeFor(lead) > 0;
+    }),
+    deliveryReadyNotBooked: (leads || []).filter((lead) => lead.supplier_actual_delivery_date && !lead.installation_completed_at && !hasActiveWorkOrder(lead)),
+    technicianNotNotified: active.filter((order) => inNextDays(order.scheduled_start, 7, now) && order.technician_id && order.technician_status === "not_notified"),
+    technicianNotConfirmed: active.filter((order) => inNextDays(order.scheduled_start, 7, now) && order.technician_status === "notified")
   };
 }
 
@@ -278,12 +351,18 @@ function isTrue(value) {
 module.exports = {
   WORK_ORDER_STATUSES,
   WORK_TYPES,
+  TECHNICIAN_STATUSES,
+  CUSTOMER_CONFIRMATION_STATUSES,
+  RISK_LEVELS,
   createTechnician,
   updateTechnician,
   createWorkOrder,
   updateWorkOrder,
   workOrdersForLead,
   scheduleSummary,
+  appendEventLog,
+  dispatchState,
+  installationTodayBuckets,
   digestForTechnician,
   workOrderCalendarPayload,
   generateIcs,

@@ -9,6 +9,16 @@ function ensureOperationsState(state, config = {}) {
   if (!Array.isArray(state.customerInvoices)) state.customerInvoices = [];
   if (!Array.isArray(state.technicians)) state.technicians = [];
   if (!Array.isArray(state.workOrders)) state.workOrders = [];
+  for (const order of state.workOrders) {
+    if (order.customer_email === undefined) order.customer_email = "";
+    if (order.technician_status === undefined) order.technician_status = "not_notified";
+    if (order.customer_confirmation_status === undefined) order.customer_confirmation_status = "not_sent";
+    if (order.risk_level === undefined) order.risk_level = "grey";
+    if (order.internal_notes === undefined) order.internal_notes = "";
+    if (order.calendar_uid === undefined) order.calendar_uid = `${order.id}@autodoorsyorkshire.com`;
+    if (order.calendar_sequence === undefined) order.calendar_sequence = 0;
+    if (order.logs === undefined) order.logs = [];
+  }
   if (!Array.isArray(state.messageLogs)) state.messageLogs = [];
   if (!state.companySettings || typeof state.companySettings !== "object") state.companySettings = {};
   state.companySettings = mergeCompanySettings(defaultCompanySettings(config), state.companySettings);

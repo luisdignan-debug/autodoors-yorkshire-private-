@@ -7,6 +7,7 @@ const http = require("node:http");
 const { loadConfig } = require("../src/config");
 const { JsonStore } = require("../src/database/jsonStore");
 const { startAppServer } = require("../src/admin/appServer");
+const { ensureOperationsState } = require("../src/customerInvoices");
 
 test("admin dashboard serves health and creates manual lead", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "admin-app-"));
@@ -357,6 +358,73 @@ test("admin dashboard serves health and creates manual lead", async () => {
     assert.equal(deleted.statusCode, 303);
     assert.equal(store.state.leads.length, 0);
     assert.match(store.state.logs.at(-1).message, /deleted/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("ensureOperationsState backfills legacy work order dispatch fields", () => {
+  const state = {
+    workOrders: [{
+      id: "legacy-wo-1",
+      technician_status: "confirmed",
+      logs: [{ event_type: "legacy" }]
+    }]
+  };
+
+  ensureOperationsState(state, loadConfig({}));
+
+  assert.equal(state.workOrders[0].customer_email, "");
+  assert.equal(state.workOrders[0].technician_status, "confirmed");
+  assert.equal(state.workOrders[0].customer_confirmation_status, "not_sent");
+  assert.equal(state.workOrders[0].risk_level, "grey");
+  assert.equal(state.workOrders[0].internal_notes, "");
+  assert.equal(state.workOrders[0].calendar_uid, "legacy-wo-1@autodoorsyorkshire.com");
+  assert.equal(state.workOrders[0].calendar_sequence, 0);
+  assert.deepEqual(state.workOrders[0].logs, [{ event_type: "legacy" }]);
+});
+
+test("work order notify route records dispatch intent without sending messages", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "admin-work-order-"));
+  const config = loadConfig({
+    APP_PORT: "0",
+    DRY_RUN: "false",
+    ADMIN_USERNAME: "admin",
+    ADMIN_PASSWORD: "password",
+    DATABASE_PATH: path.join(dir, "db.json"),
+    TRACKER_XLSX_PATH: path.join(dir, "tracker.xlsx")
+  });
+  const store = new JsonStore(config.databasePath);
+  store.state.leads = [{ id: "lead-route-1", customerName: "Jane Smith" }];
+  store.state.technicians = [{ id: "tech-route-1", name: "Luis", active: true }];
+  store.state.workOrders = [{
+    id: "work-order-route-1",
+    lead_id: "lead-route-1",
+    job_id: "lead-route-1",
+    technician_id: "tech-route-1",
+    scheduled_start: "2026-06-06T09:00",
+    scheduled_end: "2026-06-06T11:00",
+    status: "scheduled"
+  }];
+  store.state.messageLogs = [];
+  const logger = { error() {}, warn() {}, info() {} };
+  const server = startAppServer({ config, store, logger });
+  try {
+    const { port } = server.address();
+    const sessionCookie = await getSessionCookie(port, "admin", "password");
+    const notified = await request({
+      port,
+      path: "/work-orders/work-order-route-1/notify-technician",
+      method: "POST",
+      cookie: sessionCookie
+    });
+
+    assert.equal(notified.statusCode, 303);
+    assert.equal(notified.headers.location, "/work-orders/work-order-route-1");
+    assert.equal(store.state.workOrders[0].technician_status, "notified");
+    assert.ok(store.state.workOrders[0].last_digest_sent_at);
+    assert.equal(store.state.workOrders[0].logs.at(-1).event_type, "technician_notified");
+    assert.equal(store.state.messageLogs.length, 0);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
