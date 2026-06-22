@@ -79,6 +79,9 @@ const {
   updateWorkOrder,
   appendEventLog,
   workOrdersForLead,
+  dispatchState,
+  installationTodayBuckets,
+  TECHNICIAN_STATUSES,
   scheduleSummary,
   digestForTechnician,
   generateIcs,
@@ -169,7 +172,7 @@ function startAppServer({ config, store, logger }) {
       if (url.pathname === "/exports" && req.method === "GET") return html(res, exportsPage(config, activeStore));
       if (url.pathname === "/jobs" && req.method === "GET") return html(res, jobsPage(filterLeads(activeStore.state.leads || [], url.searchParams), url.searchParams, activeStore.state));
       if (url.pathname === "/leads" && req.method === "GET") return html(res, leadsPage(filterLeads(activeStore.state.leads || [], url.searchParams), url.searchParams, activeStore.state));
-      if (url.pathname === "/installations" && req.method === "GET") return html(res, installationsPage(activeStore.state.leads || [], activeStore.state));
+      if (url.pathname === "/installations" && req.method === "GET") return html(res, installationsPage(activeStore.state.leads || [], activeStore.state, url.searchParams));
       if (url.pathname === "/technician-schedule" && req.method === "GET") return html(res, technicianSchedulePage(config, activeStore, url.searchParams));
       if (url.pathname === "/technician-schedule/daily" && req.method === "GET") return html(res, technicianDigestPage(config, activeStore, 1, url.searchParams));
       if (url.pathname === "/technician-schedule/weekly" && req.method === "GET") return html(res, technicianDigestPage(config, activeStore, 7, url.searchParams));
@@ -924,6 +927,10 @@ function todayPage(config, store) {
     + aySummaryCard({ label: "Owed to suppliers", value: formatMoney(summary.supplierOutstanding), href: "/finance" })
     + aySummaryCard({ label: "Jobs at risk", value: String(atRisk), href: "/today" })
     + `</div>`;
+  const financeFor = (lead) => {
+    const financials = jobFinancials(lead, ensureFinanceState(store.state || {}));
+    return financials.customerOutstanding || financials.customer_amount_outstanding || 0;
+  };
   const sections = groups.map(([label, group]) => {
     const groupItems = items.filter((item) => item.group === group);
     if (!groupItems.length) return "";
@@ -932,6 +939,7 @@ function todayPage(config, store) {
   }).join("");
   const body = `${store.demo ? demoBanner() : ""}`
     + `<section class="ay-section">${summaryGrid}</section>`
+    + todayDispatchSection(store.state || {}, leads, financeFor)
     + (items.length
         ? sections
         : ayAllClear("All caught up", "No customer, supplier, install or payment actions are outstanding right now."))
@@ -2184,23 +2192,91 @@ function workOrderCards(workOrders, state = {}, config = {}) {
 
 function workOrderDetailPage(order, config, store) {
   const state = ensureOperationsState(store.state || {}, config);
+  const financeState = ensureFinanceState(state);
+  const lead = leadForWorkOrder(order, state.leads || []);
+  const balance = lead ? customerOutstandingForLead(lead, financeState) : 0;
   const technician = (state.technicians || []).find((item) => item.id === order.technician_id) || {};
   const digest = digestForTechnician({ ...state, workOrders: [order] }, technician.id, order.scheduled_start || new Date(), 1);
+  const dispatch = dispatchState(order, { balanceOutstanding: balance });
+  const riskBadge = ["red", "amber"].includes(order.risk_level)
+    ? ayBadge({ variant: order.risk_level, label: `${statusLabel(order.risk_level)} risk` })
+    : "";
+  const subtitle = [
+    statusLabel(order.work_type),
+    order.postcode || lead?.customerPostcode,
+    dateTimeLabel(order.scheduled_start),
+    order.time_window
+  ].filter(Boolean).join(" · ");
   return pageShell(
     "Work Order",
-    `<section class="page-intro"><div><h2>${escapeHtml(order.customer_name || order.postcode || "Work order")}</h2><p>${escapeHtml(formatWorkOrderValue(order))}</p></div><div class="actions"><a class="button secondary" href="/technician-schedule">Schedule</a><a class="button" href="/work-orders/${encodeURIComponent(order.id)}/ics">Download .ics</a></div></section>
-    <section class="lead-detail summary-grid">
-      <div><strong>Status</strong><br>${badge(order.status)}</div>
-      <div><strong>Technician</strong><br>${escapeHtml(technician.name || "Unassigned")}</div>
-      <div><strong>Customer</strong><br>${escapeHtml(order.customer_name || "")}</div>
-      <div><strong>Phone</strong><br>${escapeHtml(order.customer_phone || "")}</div>
-      <div><strong>Address</strong><br>${escapeHtml([order.address, order.postcode].filter(Boolean).join(", "))}</div>
-      <div><strong>Calendar</strong><br>${escapeHtml(calendarReadiness(config).warning || "Ready")}</div>
+    `${ayBackLink("/installations", "Back to installations")}
+    <section class="ay-section" style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--ay-space-4);flex-wrap:wrap">
+      <div>
+        <h2 class="ay-page-title">${escapeHtml(order.customer_name || lead?.customerName || order.postcode || "Work order")}</h2>
+        <p class="ay-page-subtitle">${escapeHtml(subtitle || "Appointment details not recorded")}</p>
+      </div>
+      <div style="display:flex;gap:var(--ay-space-2);align-items:center;flex-wrap:wrap">
+        ${dispatchBadge(dispatch)}
+        ${riskBadge}
+      </div>
     </section>
-    <section class="split">
-      <article><h2>Technician message preview</h2><textarea id="job-message">${escapeHtml(digest.body)}</textarea><button onclick="navigator.clipboard.writeText(document.getElementById('job-message').value);return false;">Copy message</button>${whatsappLink(technician.whatsapp_number || technician.mobile_number, digest.body) ? `<a class="button secondary" href="${escapeAttr(whatsappLink(technician.whatsapp_number || technician.mobile_number, digest.body))}" target="_blank" rel="noreferrer">Open WhatsApp manually</a>` : ""}</article>
-      <article><h2>Actions</h2><div class="actions"><form method="post" action="/work-orders/${encodeURIComponent(order.id)}/send-to-technician"><button>Send to technician if enabled</button></form><form method="post" action="/work-orders/${encodeURIComponent(order.id)}/add-to-calendar"><button class="button secondary">Prepare calendar event</button></form><form method="post" action="/work-orders/${encodeURIComponent(order.id)}/mark-complete"><button>Mark completed</button></form><form method="post" action="/work-orders/${encodeURIComponent(order.id)}/cancel"><button class="danger-button">Cancel</button></form></div></article>
-    </section>`
+    ${workOrderAppointmentCard(order, lead, state, balance)}
+    ${workOrderPrimaryAction(order, state, balance)}
+    <details class="panel">
+      <summary>More actions</summary>
+      <div class="actions" style="margin-top:var(--ay-space-3)">
+        ${workOrderPostButton(order.id, "confirm-customer", "Confirm with customer", "secondary")}
+        ${workOrderPostButton(order.id, "mark-complete", "Mark completed", "secondary")}
+        ${workOrderPostButton(order.id, "cancel", "Cancel", "danger")}
+      </div>
+      <details class="advanced-panel" style="margin-top:var(--ay-space-3)">
+        <summary>Reschedule</summary>
+        <form method="post" action="/work-orders/${encodeURIComponent(order.id)}/reschedule" class="stacked-form" style="margin-top:var(--ay-space-3)">
+          <div class="field-grid">
+            ${labeledInput("scheduled_start", "Scheduled start", order.scheduled_start || "", "datetime-local")}
+            ${labeledInput("scheduled_end", "Scheduled end", order.scheduled_end || "", "datetime-local")}
+          </div>
+          ${ayButton({ label: "Confirm reschedule", type: "submit", variant: "primary" })}
+        </form>
+      </details>
+    </details>
+    <section class="panel">
+      <h2>Activity</h2>
+      ${workOrderActivityList(order.logs || [])}
+      <form method="post" action="/work-orders/${encodeURIComponent(order.id)}/add-log" class="stacked-form" style="margin-top:var(--ay-space-4)">
+        <label><span>Add note</span><textarea name="note" placeholder="Internal note"></textarea></label>
+        ${ayButton({ label: "Add note", type: "submit", variant: "secondary" })}
+      </form>
+    </section>
+    <details class="panel">
+      <summary>Advanced</summary>
+      <section class="split" style="margin-top:var(--ay-space-4)">
+        <article>
+          <h2>Technician message preview</h2>
+          <textarea id="job-message">${escapeHtml(digest.body)}</textarea>
+          <div class="actions">
+            <button onclick="navigator.clipboard.writeText(document.getElementById('job-message').value);return false;">Copy message</button>
+            ${whatsappLink(technician.whatsapp_number || technician.mobile_number, digest.body) ? `<a class="button secondary" href="${escapeAttr(whatsappLink(technician.whatsapp_number || technician.mobile_number, digest.body))}" target="_blank" rel="noreferrer">Open WhatsApp manually</a>` : ""}
+          </div>
+        </article>
+        <article>
+          <h2>Calendar and raw details</h2>
+          <div class="actions">
+            ${ayButton({ label: "Download .ics", href: `/work-orders/${encodeURIComponent(order.id)}/ics`, variant: "primary" })}
+            ${workOrderPostButton(order.id, "add-to-calendar", "Prepare calendar event", "secondary")}
+            ${workOrderPostButton(order.id, "send-to-technician", "Send to technician if enabled", "secondary")}
+          </div>
+          <div class="ay-detail-card" style="margin-top:var(--ay-space-4)">
+            <p class="ay-detail-card__title">Internal details</p>
+            ${detailRow("Work order ID", order.id)}
+            ${detailRow("Calendar UID", order.calendar_uid || order.calendar_event_id || "")}
+            ${detailRow("Calendar sequence", String(order.calendar_sequence || 0))}
+            ${detailRow("Calendar", calendarReadiness(config).warning || "Ready")}
+            ${detailRow("Internal notes", order.internal_notes || "")}
+          </div>
+        </article>
+      </section>
+    </details>`
   );
 }
 
@@ -2347,39 +2423,6 @@ function leadsPage(leads, params, state = {}) {
   );
 }
 
-function installationsPage(leads, state = {}) {
-  const prepared = (leads || []).map((lead) => ensureJobFields(lead)).filter((lead) => !["Archived", "Duplicate", "Lost", "Closed"].includes(lead.status) && !lead.closed_at);
-  const today = prepared.filter((lead) => isScheduledToday(lead.installation_scheduled_at));
-  const thisWeek = prepared.filter((lead) => isScheduledThisWeek(lead.installation_scheduled_at));
-  const bookingNeeded = prepared.filter((lead) => (lead.supplier_actual_delivery_date || lead.supplier_order_required !== "yes") && !lead.installation_scheduled_at && lead.quote_accepted_at);
-  const awaitingConfirmation = prepared.filter((lead) => lead.installation_scheduled_at && !/confirm/i.test(String(lead.installation_customer_confirmation_status || "")));
-  const completedBalanceDue = prepared.filter((lead) => lead.installation_completed_at && jobFinancials(lead, ensureFinanceState(state)).customer_amount_outstanding > 0);
-  const completedPaid = prepared.filter((lead) => lead.installation_completed_at && jobFinancials(lead, ensureFinanceState(state)).customer_amount_outstanding <= 0);
-  return pageShell(
-    "Installations",
-    `<section class="ay-section"><div class="ay-summary-grid">
-      ${aySummaryCard({ label: "Today", value: String(today.length), href: "/installations" })}
-      ${aySummaryCard({ label: "This week", value: String(thisWeek.length), href: "/installations" })}
-      ${aySummaryCard({ label: "Needs booking", value: String(bookingNeeded.length), href: "/installations" })}
-      ${aySummaryCard({ label: "Awaiting confirmation", value: String(awaitingConfirmation.length), href: "/installations" })}
-      ${aySummaryCard({ label: "Payment due", value: String(completedBalanceDue.length), href: "/installations" })}
-    </div></section>
-    <section class="split">
-      <article><h2>Today</h2>${installationCards(today, state, "No installations booked today.")}</article>
-      <article><h2>This week</h2>${installationCards(thisWeek, state, "No installations booked this week.")}</article>
-    </section>
-    <section class="split">
-      <article><h2>Needs booking</h2>${installationCards(bookingNeeded, state, "No jobs are waiting to be booked.")}</article>
-      <article><h2>Awaiting confirmation</h2>${installationCards(awaitingConfirmation, state, "No bookings need confirmation.")}</article>
-    </section>
-    <section class="split">
-      <article><h2>Completed / payment due</h2>${installationCards(completedBalanceDue, state, "No completed jobs have a customer balance due.")}</article>
-      <article><h2>Completed and paid</h2>${installationCards(completedPaid.slice(0, 12), state, "No completed paid installations yet.")}</article>
-    </section>
-    `
-  );
-}
-
 function installationCards(leads, state, emptyText) {
   if (!leads.length) return ayEmptyState({ title: "Nothing here", body: emptyText });
   return `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${leads.map((lead) => {
@@ -2416,6 +2459,342 @@ function isScheduledToday(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return false;
   return date.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
+}
+
+function installationsPage(leads, state = {}, params = new URLSearchParams()) {
+  const financeState = ensureFinanceState(state);
+  const preparedLeads = (leads || []).map((lead) => ensureJobFields(lead));
+  const financeFor = (lead) => customerOutstandingForLead(lead, financeState);
+  const buckets = installationTodayBuckets(state, preparedLeads, financeFor);
+  const view = ["today", "week", "month", "list", "technician"].includes(params.get("view")) ? params.get("view") : "today";
+  const allOrders = (state.workOrders || []).slice();
+  const activeOrders = allOrders.filter((order) => !["cancelled", "completed"].includes(order.status));
+  const nonCancelledOrders = allOrders.filter((order) => order.status !== "cancelled");
+  const baseOrders = dispatchBaseOrders(view, activeOrders, nonCancelledOrders);
+  const visibleOrders = applyDispatchFilters(baseOrders, preparedLeads, state, params, financeFor);
+  const viewTabs = [
+    ["Today", "today"],
+    ["Week", "week"],
+    ["Month", "month"],
+    ["List", "list"],
+    ["Technician board", "technician"]
+  ];
+
+  return pageShell(
+    "Installations",
+    `<section class="ay-section" style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--ay-space-4);flex-wrap:wrap">
+      <div>
+        <h2 class="ay-page-title">Installations</h2>
+        <p class="ay-page-subtitle">Book, assign and track installation work</p>
+      </div>
+      <div class="actions">
+        ${ayButton({ label: "Book installation", href: "#book", variant: "primary", size: "sm" })}
+        ${ayButton({ label: "Add repair visit", href: "#book", variant: "secondary", size: "sm" })}
+        ${ayButton({ label: "Technician view", href: "/installations?view=technician", variant: "ghost", size: "sm" })}
+      </div>
+    </section>
+    <section class="ay-section"><div class="ay-summary-grid">
+      ${aySummaryCard({ label: "Today", value: String(buckets.installsToday.length), href: "/installations?view=today" })}
+      ${aySummaryCard({ label: "This week", value: String(buckets.installsThisWeek.length), href: "/installations?view=week" })}
+      ${aySummaryCard({ label: "Needs booking", value: String(buckets.needsBooking.length), href: "/installations#needs-booking" })}
+      ${aySummaryCard({ label: "Reschedule requested", value: String(buckets.rescheduleRequested.length), href: "/installations?state=reschedule_needed" })}
+      ${aySummaryCard({ label: "Completed - balance due", value: String(buckets.completedBalanceDue.length), href: "/installations?view=list&balance=due" })}
+    </div></section>
+    ${ayFilterTabs(viewTabs.map(([label, key]) => ({ label, href: `/installations?view=${key}`, active: view === key })), "Installation views")}
+    ${dispatchFilterForm(params, state)}
+    ${view === "technician" ? technicianDispatchBoard(visibleOrders, preparedLeads, state) : dispatchGroupedView(view, visibleOrders, preparedLeads, state)}
+    ${needsBookingSection(buckets, preparedLeads)}
+    <details id="book" class="panel">
+      <summary>Book installation / repair visit</summary>
+      <div style="margin-top:var(--ay-space-4)">${workOrderForm(preparedLeads, state.technicians || [], {})}</div>
+    </details>`
+  );
+}
+
+function todayDispatchSection(state, leads, financeFor) {
+  const buckets = installationTodayBuckets(state, leads, financeFor);
+  const cards = [
+    buckets.installsToday.length ? aySummaryCard({ label: "Installations today", value: String(buckets.installsToday.length), href: "/installations?view=today" }) : "",
+    buckets.rescheduleRequested.length ? aySummaryCard({ label: "Reschedule requested", value: String(buckets.rescheduleRequested.length), href: "/installations?state=reschedule_needed" }) : "",
+    buckets.completedBalanceDue.length ? aySummaryCard({ label: "Completed - balance due", value: String(buckets.completedBalanceDue.length), href: "/installations?view=list&balance=due" }) : "",
+    buckets.deliveryReadyNotBooked.length ? aySummaryCard({ label: "Delivery ready, not booked", value: String(buckets.deliveryReadyNotBooked.length), href: "/installations#book" }) : "",
+    buckets.technicianNotNotified.length ? aySummaryCard({ label: "Technician not notified", value: String(buckets.technicianNotNotified.length), href: "/installations?needs=action" }) : "",
+    buckets.technicianNotConfirmed.length ? aySummaryCard({ label: "Technician not confirmed", value: String(buckets.technicianNotConfirmed.length), href: "/installations?needs=action" }) : ""
+  ].filter(Boolean);
+  return `<section class="ay-section"><p class="ay-section-label">Installations &amp; dispatch</p>`
+    + (cards.length ? `<div class="ay-summary-grid">${cards.join("")}</div>` : ayEmptyState({ title: "No dispatch actions", body: "No installation dispatch items need attention right now." }))
+    + `</section>`;
+}
+
+function customerOutstandingForLead(lead, financeState) {
+  const financials = jobFinancials(lead || {}, financeState);
+  return money(financials.customerOutstanding || financials.customer_amount_outstanding || 0);
+}
+
+function leadForWorkOrder(order, leads = []) {
+  return (leads || []).find((lead) => lead.id === order.lead_id || lead.id === order.job_id) || null;
+}
+
+function dispatchBadge(dispatch) {
+  return ayBadge({ variant: dispatch.tone === "grey" ? "gray" : dispatch.tone, label: dispatch.label });
+}
+
+function dispatchBaseOrders(view, activeOrders, nonCancelledOrders) {
+  const now = new Date();
+  if (view === "today") return activeOrders.filter((order) => sameUiDay(order.scheduled_start, now)).sort(sortByScheduledAsc);
+  if (view === "week") return activeOrders.filter((order) => isUiNextDays(order.scheduled_start, 7, now)).sort(sortByScheduledAsc);
+  if (view === "month") return activeOrders.filter((order) => isUiNextDays(order.scheduled_start, 31, now)).sort(sortByScheduledAsc);
+  if (view === "technician") return activeOrders.slice().sort(sortByScheduledAsc);
+  return nonCancelledOrders.slice().sort(sortByScheduledDesc);
+}
+
+function applyDispatchFilters(orders, leads, state, params, financeFor) {
+  const technician = params.get("technician") || "";
+  const dispatchKey = params.get("state") || "";
+  const type = params.get("type") || "";
+  const risk = params.get("risk") || "";
+  const needs = params.get("needs") || "";
+  const balance = params.get("balance") || "";
+  return (orders || []).filter((order) => {
+    const lead = leadForWorkOrder(order, leads);
+    const balanceOutstanding = lead ? financeFor(lead) : 0;
+    const dispatch = dispatchState(order, { balanceOutstanding });
+    if (technician === "unassigned" && order.technician_id) return false;
+    if (technician && technician !== "unassigned" && order.technician_id !== technician) return false;
+    if (dispatchKey && dispatch.key !== dispatchKey) return false;
+    if (type && order.work_type !== type) return false;
+    if (risk && order.risk_level !== risk) return false;
+    if (needs === "action" && order.technician_id && !["not_notified", "notified", "reschedule_requested"].includes(order.technician_status) && dispatch.key !== "reschedule_needed") return false;
+    if (balance === "due" && !(order.status === "completed" && balanceOutstanding > 0)) return false;
+    return true;
+  });
+}
+
+function dispatchFilterForm(params, state) {
+  const view = params.get("view") || "today";
+  const select = (name, label, options, selected = "") => `<label><span>${escapeHtml(label)}</span><select name="${escapeAttr(name)}"><option value="">Any</option>${options.map(([value, text]) => `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}</select></label>`;
+  const technicians = [["unassigned", "Unassigned"], ...(state.technicians || []).filter((tech) => tech.active !== false).map((tech) => [tech.id, tech.name || tech.id])];
+  const states = [
+    ["needs_booking", "Needs booking"],
+    ["booked", "Booked - notify technician"],
+    ["awaiting_confirmation", "Awaiting technician confirmation"],
+    ["technician_confirmed", "Technician confirmed"],
+    ["on_route", "On the way"],
+    ["on_site", "On site"],
+    ["reschedule_needed", "Reschedule requested"],
+    ["balance_due", "Completed - balance due"],
+    ["paid", "Completed and paid"]
+  ];
+  return `<form method="get" class="filters filter-panel">
+    <input type="hidden" name="view" value="${escapeAttr(view)}">
+    ${select("technician", "Technician", technicians, params.get("technician") || "")}
+    ${select("state", "Status", states, params.get("state") || "")}
+    ${select("type", "Job type", WORK_TYPES.map((type) => [type, statusLabel(type)]), params.get("type") || "")}
+    ${select("risk", "Risk", [["red", "Red"], ["amber", "Amber"], ["green", "Green"], ["grey", "Grey"]], params.get("risk") || "")}
+    ${select("needs", "Needs", [["action", "Office action"]], params.get("needs") || "")}
+    ${select("balance", "Balance", [["due", "Due"]], params.get("balance") || "")}
+    <button>Apply filters</button>
+    <a class="button secondary" href="/installations?view=${escapeAttr(view)}">Clear</a>
+  </form>`;
+}
+
+function dispatchGroupedView(view, orders, leads, state) {
+  if (!orders.length) return `<section class="ay-section">${ayEmptyState({ title: "No work orders", body: "No installation work matches this view." })}</section>`;
+  if (view === "list") {
+    return `<section class="ay-section"><p class="ay-section-label">Work orders</p><div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${orders.map((order) => dispatchCard(order, leadForWorkOrder(order, leads), state)).join("")}</div></section>`;
+  }
+  const heading = view === "today" ? "Today" : view === "week" ? "Next 7 days" : "Next 31 days";
+  return `<section class="ay-section"><p class="ay-section-label">${escapeHtml(heading)}</p>${dispatchDayGroups(orders, leads, state)}</section>`;
+}
+
+function technicianDispatchBoard(orders, leads, state) {
+  if (!orders.length) return `<section class="ay-section">${ayEmptyState({ title: "No technician work", body: "No active installation work matches these filters." })}</section>`;
+  const groups = new Map();
+  for (const order of orders) {
+    const key = order.technician_id || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(order);
+  }
+  const keys = Array.from(groups.keys()).sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return technicianName(state, a).localeCompare(technicianName(state, b));
+  });
+  return keys.map((key) => `<section class="ay-section"><p class="ay-section-label">${escapeHtml(key ? technicianName(state, key) || "Technician" : "Unassigned")}</p>${dispatchDayGroups(groups.get(key).sort(sortByScheduledAsc), leads, state)}</section>`).join("");
+}
+
+function dispatchDayGroups(orders, leads, state) {
+  const groups = new Map();
+  for (const order of orders) {
+    const key = dispatchDayKey(order.scheduled_start);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(order);
+  }
+  return Array.from(groups.keys()).sort().map((key) => `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3);margin-bottom:var(--ay-space-5)">
+    <h3 style="margin:0;color:var(--ay-text-primary);font-size:16px;font-weight:600">${escapeHtml(dispatchDayLabel(key))}</h3>
+    ${groups.get(key).map((order) => dispatchCard(order, leadForWorkOrder(order, leads), state)).join("")}
+  </div>`).join("");
+}
+
+function dispatchCard(order, lead, state) {
+  const financeState = ensureFinanceState(state);
+  const balanceOutstanding = lead ? customerOutstandingForLead(lead, financeState) : 0;
+  const dispatch = dispatchState(order, { balanceOutstanding });
+  const riskBadge = ["red", "amber"].includes(order.risk_level)
+    ? ayBadge({ variant: order.risk_level, label: `${statusLabel(order.risk_level)} risk` })
+    : "";
+  const schedule = order.time_window || dateTimeLabel(order.scheduled_start);
+  const technician = technicianName(state, order.technician_id) || "Unassigned";
+  return ayJobCard({
+    customerName: order.customer_name || lead?.customerName || order.postcode || order.id,
+    metaParts: [
+      order.postcode || lead?.customerPostcode,
+      statusLabel(order.work_type),
+      schedule,
+      technician,
+      nextDispatchAction(order, dispatch, balanceOutstanding)
+    ],
+    statusBadge: `${dispatchBadge(dispatch)}${riskBadge}`,
+    value: balanceOutstanding > 0 && order.status === "completed" ? formatMoney(balanceOutstanding) : "",
+    primaryLabel: "Open job",
+    primaryHref: `/work-orders/${encodeURIComponent(order.id)}`,
+    detailHref: `/work-orders/${encodeURIComponent(order.id)}`
+  });
+}
+
+function nextDispatchAction(order, dispatch, balanceOutstanding = 0) {
+  if (!order.technician_id) return "Next: assign technician";
+  if (dispatch.key === "balance_due" || (order.status === "completed" && balanceOutstanding > 0)) return "Next: request balance";
+  if (dispatch.key === "reschedule_needed") return "Next: reschedule";
+  if (order.technician_status === "not_notified") return "Next: notify technician";
+  if (order.technician_status === "notified") return "Next: get technician confirmation";
+  if (order.technician_status === "confirmed") return "Next: track en route";
+  if (order.technician_status === "en_route") return "Next: mark arrived";
+  if (order.technician_status === "arrived") return "Next: mark completed";
+  return dispatch.label;
+}
+
+function needsBookingSection(buckets, leads) {
+  const byLeadId = new Map();
+  for (const lead of [...(buckets.needsBooking || []), ...(buckets.deliveryReadyNotBooked || [])]) {
+    if (lead?.id && !byLeadId.has(lead.id)) byLeadId.set(lead.id, lead);
+  }
+  const bookingLeads = Array.from(byLeadId.values());
+  return `<section id="needs-booking" class="ay-section"><p class="ay-section-label">Needs booking</p>`
+    + (bookingLeads.length
+      ? `<div style="display:flex;flex-direction:column;gap:var(--ay-space-3)">${bookingLeads.map((lead) => ayJobCard({
+          customerName: lead.customerName || lead.customerPostcode || lead.id,
+          metaParts: [lead.customerPostcode, workflowLabel(lead.workflow_type), lead.supplier_actual_delivery_date ? `Delivered ${lead.supplier_actual_delivery_date}` : "Ready to book"],
+          statusBadge: ayBadge({ variant: "amber", label: "Ready to book" }),
+          value: "Ready to book",
+          primaryLabel: "Open job",
+          primaryHref: `/leads/${encodeURIComponent(lead.id)}`
+        })).join("")}</div>`
+      : ayEmptyState({ title: "No jobs need booking", body: "There are no delivery-ready jobs waiting for an appointment." }))
+    + `</section>`;
+}
+
+function workOrderAppointmentCard(order, lead, state, balance) {
+  return `<section class="ay-detail-card">
+    <p class="ay-detail-card__title">Appointment</p>
+    ${detailRow("Customer", order.customer_name || lead?.customerName || "")}
+    ${detailRow("Phone", order.customer_phone || lead?.customerPhone || "")}
+    ${detailRow("Email", order.customer_email || lead?.customerEmail || "")}
+    ${detailRow("Address / postcode", [order.address || lead?.customerAddress, order.postcode || lead?.customerPostcode].filter(Boolean).join(", "))}
+    ${detailRow("Job type", statusLabel(order.work_type))}
+    ${detailRow("Technician", technicianName(state, order.technician_id) || "Unassigned")}
+    ${detailRow("Time window", order.time_window || dateTimeLabel(order.scheduled_start))}
+    ${detailRow("Customer confirmed", plainStatusLabel(order.customer_confirmation_status || "not_sent"))}
+    ${detailRow("Technician status", technicianStatusLabel(order.technician_status))}
+    ${detailRow("Balance", lead ? formatMoney(balance) : "-")}
+  </section>`;
+}
+
+function workOrderPrimaryAction(order, state, balance) {
+  const technicians = (state.technicians || []).filter((item) => item.active !== false);
+  let body = "";
+  let title = "";
+  if (!order.technician_id) {
+    title = "Assign technician";
+    body = `<form method="post" action="/work-orders/${encodeURIComponent(order.id)}/assign" class="stacked-form">
+      <label><span>Technician</span><select name="technician_id">${technicians.length ? technicians.map((tech) => `<option value="${escapeAttr(tech.id)}">${escapeHtml(tech.name || tech.id)}</option>`).join("") : `<option value="">Add a technician first</option>`}</select></label>
+      ${ayButton({ label: "Assign technician", type: "submit", variant: "primary" })}
+    </form>`;
+  } else if (order.status === "completed" && balance > 0) {
+    title = "Request balance";
+    body = ayButton({ label: "Open job to request balance", href: `/leads/${encodeURIComponent(order.lead_id || order.job_id || "")}`, variant: "primary" });
+  } else if (order.status === "completed") {
+    title = "Job completed";
+    body = `<p class="ay-action-card__meta">This work order is complete.</p>`;
+  } else if (order.technician_status === "not_notified") {
+    title = "Notify technician";
+    body = workOrderPostButton(order.id, "notify-technician", "Notify technician", "primary");
+  } else if (order.technician_status === "notified") {
+    title = "Mark technician confirmed";
+    body = workOrderPostButton(order.id, "confirm-technician", "Mark technician confirmed", "primary");
+  } else if (order.technician_status === "confirmed") {
+    title = "Mark en route";
+    body = workOrderPostButton(order.id, "en-route", "Mark en route", "primary");
+  } else if (order.technician_status === "en_route") {
+    title = "Mark arrived";
+    body = workOrderPostButton(order.id, "arrived", "Mark arrived", "primary");
+  } else if (order.technician_status === "arrived") {
+    title = "Mark completed";
+    body = workOrderPostButton(order.id, "mark-complete", "Mark completed", "primary");
+  } else {
+    title = "Check appointment";
+    body = `<p class="ay-action-card__meta">Review the appointment details and choose an action below.</p>`;
+  }
+  return `<section class="ay-next-action">
+    <p class="ay-next-action__eyebrow">Next dispatch action</p>
+    <h2 class="ay-next-action__title">${escapeHtml(title)}</h2>
+    <div class="ay-next-action__buttons">${body}</div>
+  </section>`;
+}
+
+function workOrderPostButton(orderId, action, label, variant = "primary") {
+  return `<form method="post" action="/work-orders/${encodeURIComponent(orderId)}/${escapeAttr(action)}" style="display:inline">${ayButton({ label, type: "submit", variant })}</form>`;
+}
+
+function workOrderActivityList(logs = []) {
+  if (!logs.length) return `<p class="muted">No activity yet.</p>`;
+  return `<ul style="margin:0;padding-left:var(--ay-space-5);color:var(--ay-text-secondary);font-size:13px">${logs.map((log) => `<li>${escapeHtml([dateTimeLabel(log.created_at), plainStatusLabel(log.event_type), log.note].filter(Boolean).join(" - "))}</li>`).join("")}</ul>`;
+}
+
+function detailRow(label, value) {
+  const text = String(value || "");
+  const valueClass = text ? "ay-detail-card__row-value" : "ay-detail-card__row-value ay-detail-card__row-value--missing";
+  return `<div class="ay-detail-card__row"><span class="ay-detail-card__row-label">${escapeHtml(label)}</span><span class="${valueClass}">${escapeHtml(text || "Not recorded")}</span></div>`;
+}
+
+function plainStatusLabel(value) {
+  return String(value || "").replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()).replace(/\w\S*/g, (word, offset) => offset === 0 ? word : word.toLowerCase());
+}
+
+function technicianStatusLabel(value) {
+  return TECHNICIAN_STATUSES.includes(value) ? plainStatusLabel(value) : plainStatusLabel(value || "not_notified");
+}
+
+function sortByScheduledAsc(a, b) {
+  return String(a.scheduled_start || "9999").localeCompare(String(b.scheduled_start || "9999"));
+}
+
+function sortByScheduledDesc(a, b) {
+  return String(b.scheduled_start || "").localeCompare(String(a.scheduled_start || ""));
+}
+
+function dispatchDayKey(value) {
+  if (!value) return "9999-12-31";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "9999-12-31";
+  return date.toISOString().slice(0, 10);
+}
+
+function dispatchDayLabel(key) {
+  if (key === "9999-12-31") return "Unscheduled";
+  const date = new Date(`${key}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return key;
+  return date.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
 }
 
 function customerDetailsPanel(lead) {
@@ -2876,10 +3255,10 @@ function ayActionCard({ variant = "amber", title, count = 0, badgeLabel, meta, a
 }
 
 // Job card for list views (mobile-friendly). meta parts joined with middots.
-function ayJobCard({ customerName, metaParts = [], status, isAtRisk = false, value, primaryLabel, primaryHref, detailHref } = {}) {
+function ayJobCard({ customerName, metaParts = [], status, statusBadge, isAtRisk = false, value, primaryLabel, primaryHref, detailHref } = {}) {
   const meta = metaParts.filter(Boolean).map((part) => escapeHtml(String(part))).join(" · ");
-  const badges = ayStageBadge(status)
-    + (isAtRisk ? ayBadge({ variant: "red", label: "Job at risk" }) : "");
+  const badges = statusBadge || (ayStageBadge(status)
+    + (isAtRisk ? ayBadge({ variant: "red", label: "Job at risk" }) : ""));
   const actions = [
     value ? `<span class="ay-job-card__value">${escapeHtml(String(value))}</span>` : "",
     primaryLabel ? ayButton({ label: primaryLabel, href: primaryHref, variant: "primary", size: "sm" }) : "",

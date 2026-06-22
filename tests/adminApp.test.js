@@ -8,6 +8,7 @@ const { loadConfig } = require("../src/config");
 const { JsonStore } = require("../src/database/jsonStore");
 const { startAppServer } = require("../src/admin/appServer");
 const { ensureOperationsState } = require("../src/customerInvoices");
+const { createWorkOrder } = require("../src/schedule");
 
 test("admin dashboard serves health and creates manual lead", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "admin-app-"));
@@ -382,6 +383,64 @@ test("ensureOperationsState backfills legacy work order dispatch fields", () => 
   assert.equal(state.workOrders[0].calendar_uid, "legacy-wo-1@autodoorsyorkshire.com");
   assert.equal(state.workOrders[0].calendar_sequence, 0);
   assert.deepEqual(state.workOrders[0].logs, [{ event_type: "legacy" }]);
+});
+
+test("installation dispatch board and work order detail render", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "admin-dispatch-ui-"));
+  const config = loadConfig({
+    APP_PORT: "0",
+    DRY_RUN: "false",
+    ADMIN_USERNAME: "admin",
+    ADMIN_PASSWORD: "password",
+    DATABASE_PATH: path.join(dir, "db.json"),
+    TRACKER_XLSX_PATH: path.join(dir, "tracker.xlsx")
+  });
+  const store = new JsonStore(config.databasePath);
+  const lead = {
+    id: "lead-dispatch-1",
+    customerName: "Jane Smith",
+    customerPhone: "07700 900555",
+    customerEmail: "jane@example.test",
+    customerAddress: "12 Market Street, Huddersfield",
+    customerPostcode: "HD1 2AB",
+    quote_accepted_at: "2026-06-01",
+    supplier_actual_delivery_date: "2026-06-20",
+    jobDescription: "Install sectional door"
+  };
+  store.state.leads = [lead];
+  store.state.technicians = [{ id: "tech-dispatch-1", name: "Luis", active: true }];
+  store.state.workOrders = [
+    createWorkOrder({
+      id: "work-order-dispatch-1",
+      leadId: lead.id,
+      technician_id: "tech-dispatch-1",
+      scheduled_start: "2026-06-22T09:00",
+      scheduled_end: "2026-06-22T11:00",
+      work_type: "installation",
+      time_window: "Morning"
+    }, lead)
+  ];
+  const logger = { error() {}, warn() {}, info() {} };
+  const server = startAppServer({ config, store, logger });
+  try {
+    const { port } = server.address();
+    const sessionCookie = await getSessionCookie(port, "admin", "password");
+
+    const installations = await request({ port, path: "/installations", cookie: sessionCookie });
+    assert.equal(installations.statusCode, 200);
+    assert.match(installations.body, /Installations/);
+    assert.match(installations.body, /Needs booking/);
+
+    const technicianBoard = await request({ port, path: "/installations?view=technician", cookie: sessionCookie });
+    assert.equal(technicianBoard.statusCode, 200);
+
+    const detail = await request({ port, path: "/work-orders/work-order-dispatch-1", cookie: sessionCookie });
+    assert.equal(detail.statusCode, 200);
+    assert.match(detail.body, /Back to installations/);
+    assert.match(detail.body, /Activity|No activity yet/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("work order notify route records dispatch intent without sending messages", async () => {
